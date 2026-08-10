@@ -6,9 +6,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use codex_zectrix_dashboard::{
     AppServerClient, DashboardConfig, ObservedDashboardState, ObservedQuota, ObservedTask,
-    PublishAttempt, PublishCoordinator, PublisherState, QuotaCache, ReadonlyObservationConfig,
-    ReadonlyRolloutObserver, TaskActivityCache, TaskActivitySnapshot, ZectrixPublisher,
-    parse_hook_event, persist_hook_event, read_hook_events, reduce_task_activity, render_dashboard,
+    PluginLifecycle, PublishAttempt, PublishCoordinator, PublisherState, QuotaCache,
+    ReadonlyObservationConfig, ReadonlyRolloutObserver, TaskActivityCache, TaskActivitySnapshot,
+    ZectrixPublisher, hook_is_tombstoned, parse_hook_event, persist_hook_event, read_hook_events,
+    record_hook_owner, reduce_task_activity, render_dashboard,
 };
 
 mod setup;
@@ -35,6 +36,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             return Err("setup 不接受命令行参数".into());
         }
         return setup::run_setup();
+    }
+    if command == "lifecycle" {
+        return run_lifecycle(args.collect());
     }
     if command == "hook-record" {
         if args.next().is_some() {
@@ -158,14 +162,78 @@ fn observe_activity(
 }
 
 fn record_hook() -> Result<(), Box<dyn std::error::Error>> {
+    let Ok(executable) = env::current_exe() else {
+        return Ok(());
+    };
+    if hook_is_tombstoned(&executable) {
+        return Ok(());
+    }
+    let Ok(data_dir) = data_dir() else {
+        return Ok(());
+    };
+    let owner_pid = env::var("CODEX_ZECTRIX_HOOK_OWNER_PID")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_else(|| unsafe { libc::getppid() as u32 });
+    record_hook_owner(&data_dir, owner_pid);
     let mut input = String::new();
-    std::io::stdin().read_to_string(&mut input)?;
-    let now_epoch_seconds: i64 = SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_secs()
-        .try_into()?;
+    if std::io::stdin().read_to_string(&mut input).is_err() {
+        return Ok(());
+    }
+    let Ok(elapsed) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+        return Ok(());
+    };
+    let Ok(now_epoch_seconds) = elapsed.as_secs().try_into() else {
+        return Ok(());
+    };
     if let Ok(Some(event)) = parse_hook_event(&input, CORRELATION_SALT, now_epoch_seconds) {
-        persist_hook_event(&data_dir()?.join("hook-events.jsonl"), &event)?;
+        let _ = persist_hook_event(&data_dir.join("hook-events.jsonl"), &event);
+    }
+    Ok(())
+}
+
+fn run_lifecycle(arguments: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
+    let action = arguments.first().map(String::as_str).ok_or(
+        "用法：codex-zectrix-dashboard lifecycle <install|update|uninstall|resume|diagnostics>",
+    )?;
+    let mut plugin_root = None;
+    let mut plugin_id = None;
+    let mut index = 1;
+    while index < arguments.len() {
+        let value = arguments.get(index + 1).ok_or("生命周期参数缺少值")?;
+        match arguments[index].as_str() {
+            "--plugin-root" => plugin_root = Some(PathBuf::from(value)),
+            "--plugin-id" => plugin_id = Some(value.clone()),
+            _ => return Err("未知生命周期参数".into()),
+        }
+        index += 2;
+    }
+    let codex = env::var_os("CODEX_ZECTRIX_CODEX_BIN")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("codex"));
+    let launchctl = env::var_os("CODEX_ZECTRIX_LAUNCHCTL_BIN")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/bin/launchctl"));
+    let lifecycle = PluginLifecycle::new(data_dir()?, codex, launchctl);
+    match action {
+        "install" => lifecycle.install(
+            plugin_root.as_deref().ok_or("install 缺少 --plugin-root")?,
+            plugin_id.as_deref().ok_or("install 缺少 --plugin-id")?,
+        )?,
+        "update" => {
+            lifecycle.begin_update(
+                plugin_root.as_deref().ok_or("update 缺少 --plugin-root")?,
+                plugin_id.as_deref().ok_or("update 缺少 --plugin-id")?,
+            )?;
+            println!("hooks_disabled=true\ncompanion_stopped=true\ndesktop_reload_required=true");
+        }
+        "uninstall" => {
+            lifecycle.begin_uninstall()?;
+            println!("hooks_disabled=true\ncompanion_stopped=true\ndesktop_reload_required=true");
+        }
+        "resume" => lifecycle.resume()?,
+        "diagnostics" => print!("{}", lifecycle.diagnostics()?),
+        _ => return Err("未知生命周期操作".into()),
     }
     Ok(())
 }

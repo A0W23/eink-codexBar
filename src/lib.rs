@@ -1,5 +1,6 @@
 mod activity_sources;
 mod app_server;
+mod plugin_lifecycle;
 mod publisher;
 
 use std::cmp::Reverse;
@@ -25,7 +26,11 @@ pub use activity_sources::{
     compute_state_schema_fingerprint, parse_app_server_tasks, parse_hook_event, persist_hook_event,
     read_hook_events,
 };
-pub use app_server::{AppServerClient, AppServerError};
+pub use app_server::{AppServerClient, AppServerError, HookMetadata};
+pub use plugin_lifecycle::{
+    LifecycleAction, LifecycleError, LifecycleState, PluginLifecycle, hook_is_tombstoned,
+    record_hook_owner, reviewed_plugin_hooks,
+};
 pub use publisher::{
     FramePublisher, MIN_PUSH_INTERVAL_SECONDS, PublishAttempt, PublishCoordinator, PublisherState,
     ZectrixPublishError, ZectrixPublisher,

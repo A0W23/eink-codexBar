@@ -5,6 +5,7 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
 
@@ -27,7 +28,7 @@ impl AppServerClient {
     }
 
     pub fn read_quota(&self) -> Result<ObservedQuota, AppServerError> {
-        let result = self.read_only_request(json!({
+        let result = self.rpc_request(json!({
             "id": 2,
             "method": "account/rateLimits/read",
             "params": null
@@ -43,7 +44,7 @@ impl AppServerClient {
         let mut seen_cursors = HashSet::new();
         let mut tasks = Vec::new();
         loop {
-            let result = self.read_only_request(json!({
+            let result = self.rpc_request(json!({
                 "id": 2,
                 "method": "thread/list",
                 "params": {
@@ -74,7 +75,66 @@ impl AppServerClient {
         }
     }
 
-    fn read_only_request(&self, request: Value) -> Result<Value, AppServerError> {
+    pub fn list_hooks(&self, cwd: &Path) -> Result<Vec<HookMetadata>, AppServerError> {
+        let result = self.rpc_request(json!({
+            "id": 2,
+            "method": "hooks/list",
+            "params": { "cwds": [cwd] }
+        }))?;
+        let data = result
+            .get("data")
+            .and_then(Value::as_array)
+            .ok_or(AppServerError::MissingResult)?;
+        let entry = data.first().ok_or(AppServerError::MissingResult)?;
+        if entry
+            .get("errors")
+            .and_then(Value::as_array)
+            .is_some_and(|errors| !errors.is_empty())
+        {
+            return Err(AppServerError::Rpc);
+        }
+        serde_json::from_value(
+            entry
+                .get("hooks")
+                .cloned()
+                .ok_or(AppServerError::MissingResult)?,
+        )
+        .map_err(AppServerError::Json)
+    }
+
+    pub fn configure_hooks(
+        &self,
+        hooks: &[HookMetadata],
+        enabled: bool,
+    ) -> Result<(), AppServerError> {
+        let value = hooks
+            .iter()
+            .map(|hook| {
+                (
+                    hook.key.clone(),
+                    json!({
+                        "enabled": enabled,
+                        "trusted_hash": hook.current_hash,
+                    }),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        self.rpc_request(json!({
+            "id": 2,
+            "method": "config/batchWrite",
+            "params": {
+                "edits": [{
+                    "keyPath": "hooks.state",
+                    "value": value,
+                    "mergeStrategy": "upsert"
+                }],
+                "reloadUserConfig": true
+            }
+        }))?;
+        Ok(())
+    }
+
+    fn rpc_request(&self, request: Value) -> Result<Value, AppServerError> {
         let mut child = Command::new(&self.program)
             .args(["app-server", "--stdio"])
             .stdin(Stdio::piped())
@@ -128,6 +188,25 @@ impl Default for AppServerClient {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HookMetadata {
+    pub key: String,
+    pub event_name: String,
+    pub handler_type: String,
+    pub execution_mode: String,
+    pub matcher: Option<String>,
+    pub command: Option<String>,
+    pub timeout_sec: u64,
+    pub status_message: Option<String>,
+    pub additional_context_limit: Option<u64>,
+    pub plugin_id: Option<String>,
+    pub enabled: bool,
+    pub is_managed: bool,
+    pub current_hash: String,
+    pub trust_status: String,
+}
+
 fn write_message(writer: &mut impl Write, message: &Value) -> Result<(), AppServerError> {
     serde_json::to_writer(&mut *writer, message)?;
     writer.write_all(b"\n")?;
@@ -175,7 +254,7 @@ pub enum AppServerError {
     Io(#[from] std::io::Error),
     #[error("Codex app-server 返回了无效 JSON：{0}")]
     Json(#[from] serde_json::Error),
-    #[error("Codex app-server 拒绝了只读请求")]
+    #[error("Codex app-server 拒绝了请求")]
     Rpc,
     #[error("Codex app-server 响应缺少结果")]
     MissingResult,
