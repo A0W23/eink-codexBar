@@ -1,5 +1,7 @@
 use std::fs;
+use std::fs::FileTimes;
 use std::os::unix::fs::MetadataExt;
+use std::time::{Duration, UNIX_EPOCH};
 
 use codex_zectrix_dashboard::{
     ActivityEventKind, CorrelationKey, ReadonlyObservationConfig, ReadonlyRolloutObserver,
@@ -159,6 +161,18 @@ fn rollout_observation_reads_minimal_lifecycle_envelopes_without_modifying_codex
         ),
     )
     .unwrap();
+    let expired = sessions.join("rollout-expired.jsonl");
+    fs::write(
+        &expired,
+        "{\"type\":\"session_meta\",\"payload\":{\"id\":\"old-thread\",\"session_id\":\"old-session\",\"cli_version\":\"unsupported-old-version\"}}\n",
+    )
+    .unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&expired)
+        .unwrap()
+        .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(1_600_000_000)))
+        .unwrap();
     let before = inventory(temp.path());
     let fingerprint = compute_state_schema_fingerprint(temp.path()).unwrap();
     let observer = ReadonlyRolloutObserver::new(ReadonlyObservationConfig {

@@ -2,6 +2,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use rusqlite::{Connection, OpenFlags};
 use serde::Deserialize;
@@ -10,6 +11,8 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::{ActivityEvent, ActivityEventKind, CorrelationKey, OfficialTaskMetadata};
+
+const ROLLOUT_LOOKBACK: Duration = Duration::from_secs(24 * 60 * 60);
 
 #[derive(Debug, Error)]
 pub enum ActivitySourceError {
@@ -290,6 +293,12 @@ fn collect_rollouts(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(), Ac
                 .file_name()
                 .to_str()
                 .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl"))
+            && entry
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .map_err(|_| ActivitySourceError::ReadOnlyObservation)?
+                .elapsed()
+                .map_or(true, |age| age <= ROLLOUT_LOOKBACK)
         {
             paths.push(entry.path());
         }
