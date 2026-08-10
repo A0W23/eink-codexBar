@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 const NOTE4_BOARDS: [&str; 2] = ["zectrix-s3-epaper-4.2", "bread-compact-wifi"];
+const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -293,10 +294,9 @@ impl Keychain {
     }
 
     pub(crate) fn find(&self) -> Result<Option<Zeroizing<String>>, Box<dyn std::error::Error>> {
-        let command = self
-            .command_override
-            .as_deref()
-            .unwrap_or_else(|| Path::new("/usr/bin/security"));
+        let Some(command) = self.command_override.as_deref() else {
+            return Self::find_native(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+        };
         let output = Command::new(command)
             .args([
                 "find-generic-password",
@@ -316,6 +316,22 @@ impl Keychain {
         if value.is_empty() {
             return Ok(None);
         }
+        Ok(Some(Zeroizing::new(value)))
+    }
+
+    fn find_native(
+        service: &str,
+        account: &str,
+    ) -> Result<Option<Zeroizing<String>>, Box<dyn std::error::Error>> {
+        let bytes = match security_framework::passwords::get_generic_password(service, account) {
+            Ok(bytes) => Zeroizing::new(bytes),
+            Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => return Ok(None),
+            Err(error) => return Err(Box::new(error)),
+        };
+        if bytes.is_empty() {
+            return Ok(None);
+        }
+        let value = std::str::from_utf8(&bytes)?.to_owned();
         Ok(Some(Zeroizing::new(value)))
     }
 
@@ -435,4 +451,23 @@ fn restore_settings(
         None => {}
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Keychain;
+
+    #[test]
+    fn native_keychain_reader_returns_none_for_a_missing_credential() {
+        let service = format!(
+            "com.barrybarrywu.codex-zectrix-dashboard.missing-test-{}",
+            std::process::id()
+        );
+
+        assert!(
+            Keychain::find_native(&service, "missing-account")
+                .unwrap()
+                .is_none()
+        );
+    }
 }

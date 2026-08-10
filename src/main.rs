@@ -371,6 +371,7 @@ fn run_companion() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(Duration::from_secs(2));
     let base_url =
         env::var("CODEX_ZECTRIX_API_BASE").unwrap_or_else(|_| "https://cloud.zectrix.com".into());
+    let api_key = setup::Keychain::from_environment().find().ok().flatten();
 
     let mut cycles = 0;
     loop {
@@ -452,9 +453,8 @@ fn run_companion() -> Result<(), Box<dyn std::error::Error>> {
         );
 
         if coordinator.has_pending() {
-            let keychain = setup::Keychain::from_environment();
-            let attempt = keychain.find().ok().flatten().and_then(|api_key| {
-                ZectrixPublisher::new(&api_key, &base_url, &settings.device_id, settings.page_id)
+            let attempt = api_key.as_ref().and_then(|api_key| {
+                ZectrixPublisher::new(api_key, &base_url, &settings.device_id, settings.page_id)
                     .ok()
                     .and_then(|mut publisher| {
                         coordinator

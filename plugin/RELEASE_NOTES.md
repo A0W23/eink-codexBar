@@ -1,6 +1,6 @@
-# Codex Dashboard for ZECTRIX 0.1.5
+# Codex Dashboard for ZECTRIX 0.1.6
 
-Keeps current task activity available when a recently modified historical rollout was created by an older Codex CLI version.
+Reads the saved API Key through the native macOS Keychain API once per companion launch, preventing repeated `security` authorization prompts.
 
 MVP limitations:
 

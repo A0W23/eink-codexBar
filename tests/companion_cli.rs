@@ -87,6 +87,40 @@ fn companion_combines_cached_activity_with_live_quota_and_publishes_content_free
     }
 }
 
+#[test]
+fn companion_reads_keychain_only_once_across_repeated_publish_attempts() {
+    let temp = tempfile::tempdir().unwrap();
+    let data_dir = temp.path().join("data");
+    fs::create_dir_all(&data_dir).unwrap();
+    fs::write(
+        data_dir.join("settings.json"),
+        r#"{"deviceId":"SECRET_DEVICE_ID","pageId":3,"privacyMode":true}"#,
+    )
+    .unwrap();
+    fs::write(
+        data_dir.join("activity.json"),
+        r#"[{"title":"SECRET_TASK_TITLE","state":"running","activity_at_epoch_seconds":4102444800}]"#,
+    )
+    .unwrap();
+    let keychain_log = temp.path().join("keychain.log");
+    let security = fake_missing_security_command(temp.path());
+    let output = Command::new(common::dashboard_binary())
+        .arg("companion")
+        .env("CODEX_ZECTRIX_API_BASE", "http://127.0.0.1:1")
+        .env("CODEX_ZECTRIX_DATA_DIR", &data_dir)
+        .env("CODEX_ZECTRIX_CODEX_BIN", fake_codex_command(temp.path()))
+        .env("CODEX_ZECTRIX_SECURITY_BIN", security)
+        .env("TEST_KEYCHAIN_LOG", &keychain_log)
+        .env("TEST_CODEX_LOG", temp.path().join("codex.log"))
+        .env("CODEX_ZECTRIX_MAX_CYCLES", "3")
+        .env("CODEX_ZECTRIX_POLL_INTERVAL_MILLIS", "0")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(fs::read_to_string(keychain_log).unwrap().lines().count(), 1);
+}
+
 fn fake_codex_command(temp: &std::path::Path) -> std::path::PathBuf {
     let path = temp.join("codex");
     fs::write(
@@ -117,6 +151,19 @@ fn fake_security_command(temp: &std::path::Path) -> std::path::PathBuf {
     fs::write(
         &path,
         "#!/bin/sh\n[ \"$1\" = find-generic-password ] || exit 2\nprintf '%s' \"$TEST_KEYCHAIN_SECRET\"\n",
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&path, permissions).unwrap();
+    path
+}
+
+fn fake_missing_security_command(temp: &std::path::Path) -> std::path::PathBuf {
+    let path = temp.join("missing-security");
+    fs::write(
+        &path,
+        "#!/bin/sh\nprintf 'read\\n' >> \"$TEST_KEYCHAIN_LOG\"\nexit 44\n",
     )
     .unwrap();
     let mut permissions = fs::metadata(&path).unwrap().permissions();
