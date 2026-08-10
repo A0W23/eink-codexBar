@@ -8,6 +8,7 @@ const NOW: i64 = 1_786_330_000;
 fn task(id: &str, title: &str) -> OfficialTaskMetadata {
     OfficialTaskMetadata {
         correlation: CorrelationKey::derive(id, "test-installation"),
+        correlation_aliases: Vec::new(),
         title: title.into(),
         parent_correlation: None,
     }
@@ -76,6 +77,30 @@ fn a_new_execution_replaces_the_same_tasks_ended_turn() {
 }
 
 #[test]
+fn session_tree_alias_correlates_hook_edges_with_official_thread_metadata() {
+    let task = OfficialTaskMetadata {
+        correlation: CorrelationKey::derive("official-thread-id", "test-installation"),
+        correlation_aliases: vec![CorrelationKey::derive(
+            "shared-session-id",
+            "test-installation",
+        )],
+        title: "官方任务标题".into(),
+        parent_correlation: None,
+    };
+    let hook_event = ActivityEvent {
+        correlation: CorrelationKey::derive("shared-session-id", "test-installation"),
+        kind: ActivityEventKind::UserSubmission,
+        observed_at_epoch_seconds: NOW,
+    };
+
+    let snapshot = reduce_task_activity([task], [hook_event], NOW);
+
+    assert_eq!(snapshot.tasks.len(), 1);
+    assert_eq!(snapshot.tasks[0].title, "官方任务标题");
+    assert_eq!(snapshot.tasks[0].state, ActivityState::Running);
+}
+
+#[test]
 fn unmatched_running_edges_expire_instead_of_running_forever() {
     let snapshot = reduce_task_activity(
         [task("task-1", "实现任务动态")],
@@ -121,6 +146,7 @@ fn subagents_are_folded_away_while_top_level_automation_titles_remain() {
     let parent = task("parent", "主任务");
     let subagent = OfficialTaskMetadata {
         correlation: CorrelationKey::derive("child", "test-installation"),
+        correlation_aliases: Vec::new(),
         title: "子代理".into(),
         parent_correlation: Some(parent.correlation.clone()),
     };

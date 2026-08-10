@@ -115,6 +115,7 @@ impl CorrelationKey {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OfficialTaskMetadata {
     pub correlation: CorrelationKey,
+    pub correlation_aliases: Vec<CorrelationKey>,
     pub title: String,
     pub parent_correlation: Option<CorrelationKey>,
 }
@@ -197,8 +198,20 @@ pub fn reduce_task_activity(
                 .map(|parent| (task.correlation.clone(), parent.clone()))
         })
         .collect();
+    let alias_to_task: HashMap<_, _> = metadata
+        .iter()
+        .flat_map(|task| {
+            task.correlation_aliases
+                .iter()
+                .cloned()
+                .map(|alias| (alias, task.correlation.clone()))
+        })
+        .collect();
     let mut latest: HashMap<CorrelationKey, ActivityEvent> = HashMap::new();
     for mut event in events {
+        if let Some(task) = alias_to_task.get(&event.correlation) {
+            event.correlation = task.clone();
+        }
         if let Some(parent) = parent_by_child.get(&event.correlation) {
             event.correlation = parent.clone();
         }

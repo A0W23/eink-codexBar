@@ -111,7 +111,7 @@ printf '%s\n' '{{"id":2,"result":{{"data":[{{"id":"different-thread-id","session
     assert_eq!(tasks[0].title, "官方任务标题");
     assert_eq!(
         tasks[0].correlation,
-        CorrelationKey::derive("task-1", "test-installation")
+        CorrelationKey::derive("different-thread-id", "test-installation")
     );
     let messages: Vec<serde_json::Value> = fs::read_to_string(requests)
         .unwrap()
@@ -132,4 +132,59 @@ printf '%s\n' '{{"id":2,"result":{{"data":[{{"id":"different-thread-id","session
             .any(|source| source == "subAgent")
     );
     assert!(!format!("{tasks:?}").contains("SECRET_"));
+}
+
+#[test]
+fn standalone_client_follows_every_read_only_task_metadata_page() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = temp.path().join("fake-codex");
+    let requests = temp.path().join("requests.jsonl");
+    let counter = temp.path().join("counter");
+    let script = format!(
+        r#"#!/bin/sh
+read -r initialize
+printf '%s\n' '{{"id":1,"result":{{"userAgent":"fake"}}}}'
+read -r initialized
+read -r threads
+printf '%s\n' "$threads" >> '{}'
+count=0
+[ -f '{}' ] && count=$(cat '{}')
+count=$((count + 1))
+printf '%s' "$count" > '{}'
+if [ "$count" -eq 1 ]; then
+  printf '%s\n' '{{"id":2,"result":{{"data":[{{"id":"thread-1","sessionId":"session-1","name":"第一页","parentThreadId":null,"source":"appServer"}}],"nextCursor":"cursor-2"}}}}'
+else
+  printf '%s\n' '{{"id":2,"result":{{"data":[{{"id":"thread-2","sessionId":"session-2","name":"第二页","parentThreadId":null,"source":"appServer"}}],"nextCursor":null}}}}'
+fi
+"#,
+        requests.display(),
+        counter.display(),
+        counter.display(),
+        counter.display()
+    );
+    fs::write(&server, script).unwrap();
+    let mut permissions = fs::metadata(&server).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&server, permissions).unwrap();
+
+    let tasks = AppServerClient::new(&server)
+        .read_task_metadata("test-installation")
+        .unwrap();
+
+    assert_eq!(tasks.len(), 2);
+    assert_eq!(tasks[0].title, "第一页");
+    assert_eq!(tasks[1].title, "第二页");
+    let requests: Vec<serde_json::Value> = fs::read_to_string(requests)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0]["params"]["cursor"].is_null());
+    assert_eq!(requests[1]["params"]["cursor"], "cursor-2");
+    assert!(
+        requests
+            .iter()
+            .all(|request| { request["params"]["useStateDbOnly"] == true })
+    );
 }

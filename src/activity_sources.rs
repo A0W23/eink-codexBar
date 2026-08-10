@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OpenFlags};
 use serde::Deserialize;
-use serde_json::Value;
+use serde::de::IgnoredAny;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -31,73 +31,115 @@ pub enum ActivitySourceError {
 #[serde(rename_all = "camelCase")]
 struct ThreadListResponse {
     data: Vec<ThreadMetadata>,
+    next_cursor: Option<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ThreadMetadata {
+    id: String,
     session_id: String,
     name: Option<String>,
     parent_thread_id: Option<String>,
-    source: Value,
+    #[serde(rename = "source")]
+    _source: ThreadSource,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+#[allow(dead_code)]
+enum ThreadSource {
+    Named(NamedThreadSource),
+    Custom {
+        custom: String,
+    },
+    Subagent {
+        #[serde(rename = "subAgent")]
+        subagent: SubagentSource,
+    },
+}
+
+#[derive(Deserialize)]
+enum NamedThreadSource {
+    #[serde(rename = "cli")]
+    Cli,
+    #[serde(rename = "vscode")]
+    Vscode,
+    #[serde(rename = "exec")]
+    Exec,
+    #[serde(rename = "appServer")]
+    AppServer,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+#[allow(dead_code)]
+enum SubagentSource {
+    Named(NamedSubagentSource),
+    ThreadSpawn { thread_spawn: IgnoredAny },
+    Other { other: IgnoredAny },
+}
+
+#[derive(Deserialize)]
+enum NamedSubagentSource {
+    #[serde(rename = "review")]
+    Review,
+    #[serde(rename = "compact")]
+    Compact,
+    #[serde(rename = "memory_consolidation")]
+    MemoryConsolidation,
 }
 
 pub fn parse_app_server_tasks(
     response: &str,
     installation_salt: &str,
 ) -> Result<Vec<OfficialTaskMetadata>, ActivitySourceError> {
+    Ok(parse_app_server_task_page(response, installation_salt)?.tasks)
+}
+
+pub(crate) struct TaskMetadataPage {
+    pub tasks: Vec<OfficialTaskMetadata>,
+    pub next_cursor: Option<String>,
+}
+
+pub(crate) fn parse_app_server_task_page(
+    response: &str,
+    installation_salt: &str,
+) -> Result<TaskMetadataPage, ActivitySourceError> {
     let response: ThreadListResponse =
         serde_json::from_str(response).map_err(|_| ActivitySourceError::UnsupportedTaskMetadata)?;
-    response
-        .data
-        .iter()
-        .try_for_each(|task| validate_thread_source(&task.source))?;
-    Ok(response
+    let tasks = response
         .data
         .into_iter()
         .filter_map(|task| {
             let title = task.name.filter(|title| !title.trim().is_empty())?;
-            let correlation = CorrelationKey::derive(&task.session_id, installation_salt);
+            let correlation = CorrelationKey::derive(&task.id, installation_salt);
             Some(OfficialTaskMetadata {
-                correlation: correlation.clone(),
+                correlation,
+                correlation_aliases: vec![CorrelationKey::derive(
+                    &task.session_id,
+                    installation_salt,
+                )],
                 title,
-                parent_correlation: task.parent_thread_id.map(|_| correlation),
+                parent_correlation: task
+                    .parent_thread_id
+                    .map(|id| CorrelationKey::derive(&id, installation_salt)),
             })
         })
-        .collect())
+        .collect();
+    Ok(TaskMetadataPage {
+        tasks,
+        next_cursor: response.next_cursor,
+    })
 }
 
-fn validate_thread_source(source: &Value) -> Result<(), ActivitySourceError> {
-    if source
-        .as_str()
-        .is_some_and(|source| matches!(source, "cli" | "vscode" | "exec" | "appServer" | "unknown"))
-    {
-        return Ok(());
-    }
-    let Some(source) = source.as_object() else {
-        return Err(ActivitySourceError::UnsupportedTaskMetadata);
-    };
-    if source.len() != 1 {
-        return Err(ActivitySourceError::UnsupportedTaskMetadata);
-    }
-    if source.get("custom").is_some_and(Value::is_string) {
-        return Ok(());
-    }
-    let Some(subagent) = source.get("subAgent") else {
-        return Err(ActivitySourceError::UnsupportedTaskMetadata);
-    };
-    if subagent
-        .as_str()
-        .is_some_and(|kind| matches!(kind, "review" | "compact" | "memory_consolidation"))
-    {
-        return Ok(());
-    }
-    if subagent.as_object().is_some_and(|kind| {
-        kind.len() == 1 && (kind.contains_key("thread_spawn") || kind.contains_key("other"))
-    }) {
-        return Ok(());
-    }
-    Err(ActivitySourceError::UnsupportedTaskMetadata)
+#[derive(Deserialize)]
+struct HookPayload {
+    hook_event_name: String,
+    session_id: String,
+    status: Option<String>,
 }
 
 pub fn parse_hook_event(
@@ -105,34 +147,24 @@ pub fn parse_hook_event(
     installation_salt: &str,
     coarse_epoch_seconds: i64,
 ) -> Result<Option<ActivityEvent>, ActivitySourceError> {
-    let payload: Value =
+    let payload: HookPayload =
         serde_json::from_str(input).map_err(|_| ActivitySourceError::UnsupportedHook)?;
-    let payload = payload
-        .as_object()
-        .ok_or(ActivitySourceError::UnsupportedHook)?;
-    let event = payload
-        .get("hook_event_name")
-        .and_then(Value::as_str)
-        .ok_or(ActivitySourceError::UnsupportedHook)?;
-    let session_id = payload
-        .get("session_id")
-        .and_then(Value::as_str)
-        .filter(|id| !id.is_empty())
-        .ok_or(ActivitySourceError::UnsupportedHook)?;
-    let kind = match event {
+    if payload.session_id.is_empty() {
+        return Err(ActivitySourceError::UnsupportedHook);
+    }
+    let kind = match payload.hook_event_name.as_str() {
         "UserPromptSubmit" => ActivityEventKind::UserSubmission,
         "PreToolUse" | "PostToolUse" => ActivityEventKind::ToolActivity,
-        "Stop" => match payload.get("status").and_then(Value::as_str) {
+        "Stop" => match payload.status.as_deref() {
             None | Some("success" | "completed") => ActivityEventKind::TurnStopped,
             Some("failure" | "failed" | "error") => ActivityEventKind::TurnFailed,
             Some("interrupted" | "cancelled") => ActivityEventKind::TurnInterrupted,
             Some(_) => return Err(ActivitySourceError::UnsupportedHook),
         },
-        "SessionStart" | "PermissionRequest" | "SessionEnd" => return Ok(None),
         _ => return Err(ActivitySourceError::UnsupportedHook),
     };
     Ok(Some(ActivityEvent {
-        correlation: CorrelationKey::derive(session_id, installation_salt),
+        correlation: CorrelationKey::derive(&payload.session_id, installation_salt),
         kind,
         observed_at_epoch_seconds: coarse_epoch_seconds - coarse_epoch_seconds.rem_euclid(60),
     }))
@@ -273,42 +305,47 @@ fn parse_rollout(
 ) -> Result<Vec<ActivityEvent>, ActivitySourceError> {
     let reader =
         BufReader::new(File::open(path).map_err(|_| ActivitySourceError::ReadOnlyObservation)?);
-    let mut correlation = None;
+    let mut correlations = Vec::new();
     let mut events = Vec::new();
     for line in reader.lines() {
         let line = line.map_err(|_| ActivitySourceError::ReadOnlyObservation)?;
-        let envelope: Value =
+        let envelope: RolloutEnvelope =
             serde_json::from_str(&line).map_err(|_| ActivitySourceError::UnsupportedRollout)?;
-        let envelope_type = envelope.get("type").and_then(Value::as_str);
-        let payload = envelope
-            .get("payload")
-            .and_then(Value::as_object)
-            .ok_or(ActivitySourceError::UnsupportedRollout)?;
-        if envelope_type == Some("session_meta") {
-            let cli_version = payload
-                .get("cli_version")
-                .and_then(Value::as_str)
+        if envelope.envelope_type == "session_meta" {
+            let cli_version = envelope
+                .payload
+                .cli_version
+                .as_deref()
                 .ok_or(ActivitySourceError::UnsupportedRollout)?;
             if cli_version != supported_cli_version {
                 return Err(ActivitySourceError::UnsupportedVersion);
             }
-            let session_id = payload
-                .get("session_id")
-                .and_then(Value::as_str)
+            let thread_id = envelope
+                .payload
+                .id
+                .as_deref()
                 .filter(|id| !id.is_empty())
                 .ok_or(ActivitySourceError::UnsupportedRollout)?;
-            correlation = Some(CorrelationKey::derive(session_id, installation_salt));
+            correlations.push(CorrelationKey::derive(thread_id, installation_salt));
+            if let Some(session_id) = envelope
+                .payload
+                .session_id
+                .as_deref()
+                .filter(|id| !id.is_empty())
+            {
+                correlations.push(CorrelationKey::derive(session_id, installation_salt));
+            }
             continue;
         }
-        if envelope_type != Some("event_msg") {
+        if envelope.envelope_type != "event_msg" {
             continue;
         }
-        let Some(payload_type) = payload.get("type").and_then(Value::as_str) else {
+        let Some(payload_type) = envelope.payload.payload_type.as_deref() else {
             return Err(ActivitySourceError::UnsupportedRollout);
         };
         let kind = match payload_type {
             "task_started" => Some(ActivityEventKind::RolloutStarted),
-            "task_complete" if payload.get("error").is_some_and(|value| !value.is_null()) => {
+            "task_complete" if envelope.payload.error.is_some() => {
                 Some(ActivityEventKind::TurnFailed)
             }
             "task_complete" => Some(ActivityEventKind::TurnStopped),
@@ -321,25 +358,49 @@ fn parse_rollout(
         let Some(kind) = kind else {
             continue;
         };
-        let correlation = correlation
-            .clone()
-            .ok_or(ActivitySourceError::UnsupportedRollout)?;
         let timestamp = match kind {
-            ActivityEventKind::RolloutStarted => payload.get("started_at"),
-            _ => payload
-                .get("completed_at")
-                .or_else(|| payload.get("started_at")),
+            ActivityEventKind::RolloutStarted => envelope.payload.started_at,
+            _ => envelope
+                .payload
+                .completed_at
+                .or(envelope.payload.started_at),
         }
-        .and_then(Value::as_i64)
         .ok_or(ActivitySourceError::UnsupportedRollout)?;
-        events.push(ActivityEvent {
-            correlation,
-            kind,
-            observed_at_epoch_seconds: timestamp,
-        });
+        if correlations.is_empty() {
+            return Err(ActivitySourceError::UnsupportedRollout);
+        }
+        events.extend(
+            correlations
+                .iter()
+                .cloned()
+                .map(|correlation| ActivityEvent {
+                    correlation,
+                    kind,
+                    observed_at_epoch_seconds: timestamp,
+                }),
+        );
     }
-    if correlation.is_none() {
+    if correlations.is_empty() {
         return Err(ActivitySourceError::UnsupportedRollout);
     }
     Ok(events)
+}
+
+#[derive(Deserialize)]
+struct RolloutEnvelope {
+    #[serde(rename = "type")]
+    envelope_type: String,
+    payload: RolloutPayload,
+}
+
+#[derive(Deserialize)]
+struct RolloutPayload {
+    #[serde(rename = "type")]
+    payload_type: Option<String>,
+    id: Option<String>,
+    session_id: Option<String>,
+    cli_version: Option<String>,
+    started_at: Option<i64>,
+    completed_at: Option<i64>,
+    error: Option<IgnoredAny>,
 }

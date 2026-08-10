@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -7,9 +8,10 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use thiserror::Error;
 
+use crate::activity_sources::parse_app_server_task_page;
 use crate::{
     ActivitySourceError, DashboardError, ObservedQuota, OfficialTaskMetadata,
-    parse_app_server_quota, parse_app_server_tasks,
+    parse_app_server_quota,
 };
 
 #[derive(Clone, Debug)]
@@ -37,23 +39,39 @@ impl AppServerClient {
         &self,
         installation_salt: &str,
     ) -> Result<Vec<OfficialTaskMetadata>, AppServerError> {
-        let result = self.read_only_request(json!({
-            "id": 2,
-            "method": "thread/list",
-            "params": {
-                "limit": 100,
-                "sortKey": "updated_at",
-                "sortDirection": "desc",
-                "archived": false,
-                "sourceKinds": [
-                    "cli", "vscode", "exec", "appServer", "subAgent", "subAgentReview",
-                    "subAgentCompact", "subAgentThreadSpawn", "subAgentOther", "unknown"
-                ],
-                "useStateDbOnly": true
+        let mut cursor = None;
+        let mut seen_cursors = HashSet::new();
+        let mut tasks = Vec::new();
+        loop {
+            let result = self.read_only_request(json!({
+                "id": 2,
+                "method": "thread/list",
+                "params": {
+                    "cursor": cursor,
+                    "limit": 100,
+                    "sortKey": "updated_at",
+                    "sortDirection": "desc",
+                    "archived": false,
+                    "sourceKinds": [
+                        "cli", "vscode", "exec", "appServer", "subAgent", "subAgentReview",
+                        "subAgentCompact", "subAgentThreadSpawn", "subAgentOther", "unknown"
+                    ],
+                    "useStateDbOnly": true
+                }
+            }))?;
+            let page =
+                parse_app_server_task_page(&serde_json::to_string(&result)?, installation_salt)?;
+            tasks.extend(page.tasks);
+            let Some(next_cursor) = page.next_cursor else {
+                return Ok(tasks);
+            };
+            if !seen_cursors.insert(next_cursor.clone()) {
+                return Err(AppServerError::Activity(
+                    ActivitySourceError::UnsupportedTaskMetadata,
+                ));
             }
-        }))?;
-        parse_app_server_tasks(&serde_json::to_string(&result)?, installation_salt)
-            .map_err(AppServerError::Activity)
+            cursor = Some(next_cursor);
+        }
     }
 
     fn read_only_request(&self, request: Value) -> Result<Value, AppServerError> {

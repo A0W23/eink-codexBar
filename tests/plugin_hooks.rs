@@ -8,15 +8,7 @@ fn plugin_hooks_invoke_only_the_bundled_companion_hook_recorder() {
 
     assert_eq!(
         hooks.keys().cloned().collect::<Vec<_>>(),
-        [
-            "PermissionRequest",
-            "PostToolUse",
-            "PreToolUse",
-            "SessionEnd",
-            "SessionStart",
-            "Stop",
-            "UserPromptSubmit"
-        ]
+        ["PostToolUse", "PreToolUse", "Stop", "UserPromptSubmit"]
     );
     for definitions in hooks.values() {
         let command = definitions[0]["hooks"][0]["command"].as_str().unwrap();

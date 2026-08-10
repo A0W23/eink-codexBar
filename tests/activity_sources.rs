@@ -32,6 +32,11 @@ fn official_thread_metadata_keeps_only_named_top_level_task_identity() {
         tasks[2].parent_correlation,
         Some(tasks[0].correlation.clone())
     );
+    assert_eq!(tasks[0].correlation, CorrelationKey::derive("top-id", SALT));
+    assert_eq!(
+        tasks[0].correlation_aliases,
+        vec![CorrelationKey::derive("session-tree-1", SALT)]
+    );
     let diagnostic = format!("{tasks:?}");
     for secret in [
         "top-id",
@@ -165,9 +170,11 @@ fn rollout_observation_reads_minimal_lifecycle_envelopes_without_modifying_codex
 
     let events = observer.observe().unwrap();
 
-    assert_eq!(events.len(), 2);
+    assert_eq!(events.len(), 4);
     assert_eq!(events[0].kind, ActivityEventKind::RolloutStarted);
-    assert_eq!(events[1].kind, ActivityEventKind::TurnStopped);
+    assert_eq!(events[1].kind, ActivityEventKind::RolloutStarted);
+    assert_eq!(events[2].kind, ActivityEventKind::TurnStopped);
+    assert_eq!(events[3].kind, ActivityEventKind::TurnStopped);
     assert_eq!(before, inventory(temp.path()));
     let diagnostic = format!("{events:?}");
     for secret in ["task-1", "SECRET_PATH", "SECRET_TURN", "SECRET_RESPONSE"] {
