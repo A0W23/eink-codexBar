@@ -282,20 +282,22 @@ impl ZectrixClient {
 }
 
 pub(crate) struct Keychain {
-    command: PathBuf,
+    command_override: Option<PathBuf>,
 }
 
 impl Keychain {
     pub(crate) fn from_environment() -> Self {
         Self {
-            command: env::var_os("CODEX_ZECTRIX_SECURITY_BIN")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("/usr/bin/security")),
+            command_override: env::var_os("CODEX_ZECTRIX_SECURITY_BIN").map(PathBuf::from),
         }
     }
 
     pub(crate) fn find(&self) -> Result<Option<Zeroizing<String>>, Box<dyn std::error::Error>> {
-        let output = Command::new(&self.command)
+        let command = self
+            .command_override
+            .as_deref()
+            .unwrap_or_else(|| Path::new("/usr/bin/security"));
+        let output = Command::new(command)
             .args([
                 "find-generic-password",
                 "-a",
@@ -318,7 +320,15 @@ impl Keychain {
     }
 
     fn store(&self, api_key: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let mut child = Command::new(&self.command)
+        let Some(command) = &self.command_override else {
+            security_framework::passwords::set_generic_password(
+                KEYCHAIN_SERVICE,
+                KEYCHAIN_ACCOUNT,
+                api_key.as_bytes(),
+            )?;
+            return Ok(());
+        };
+        let mut child = Command::new(command)
             .args([
                 "add-generic-password",
                 "-a",

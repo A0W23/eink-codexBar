@@ -100,6 +100,37 @@ pub fn reviewed_plugin_hooks(
     Ok(selected)
 }
 
+fn recorded_hooks_inactive(
+    current: Vec<HookMetadata>,
+    recorded: &[HookMetadata],
+    plugin_id: &str,
+    allow_missing: bool,
+) -> Result<bool, LifecycleError> {
+    let current = current
+        .into_iter()
+        .filter(|hook| hook.plugin_id.as_deref() == Some(plugin_id))
+        .collect::<Vec<_>>();
+    if current.is_empty() {
+        return Ok(allow_missing);
+    }
+    if current.len() != recorded.len() {
+        return Err(LifecycleError::HookDefinition);
+    }
+    for recorded_hook in recorded {
+        let current_hook = current
+            .iter()
+            .find(|hook| hook.key == recorded_hook.key)
+            .ok_or(LifecycleError::HookDefinition)?;
+        if current_hook.current_hash != recorded_hook.current_hash {
+            return Err(LifecycleError::HookHash);
+        }
+        if current_hook.enabled {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleAction {
@@ -258,8 +289,7 @@ impl PluginLifecycle {
             .codex
             .list_hooks(&plugin_root)
             .map_err(|_| LifecycleError::HookConfiguration)?;
-        let current = reviewed_plugin_hooks(current, &plugin_id, &plugin_root)?;
-        if current.iter().any(|hook| hook.enabled) {
+        if !recorded_hooks_inactive(current, &hooks, &plugin_id, false)? {
             return Err(LifecycleError::HookConfiguration);
         }
         self.stop_companion()?;
@@ -287,13 +317,13 @@ impl PluginLifecycle {
                 action,
                 plugin_id,
                 plugin_root,
-                hooks: _,
+                hooks,
                 next_plugin_id,
                 next_plugin_root,
                 owner_pids,
             } => {
                 if owner_pids.into_iter().any(process_is_alive)
-                    || !self.old_hooks_inactive(&plugin_root, &plugin_id)?
+                    || !self.old_hooks_inactive(&plugin_root, &plugin_id, &hooks)?
                 {
                     return Err(LifecycleError::ReloadRequired);
                 }
@@ -348,21 +378,13 @@ impl PluginLifecycle {
         &self,
         plugin_root: &Path,
         plugin_id: &str,
+        recorded_hooks: &[HookMetadata],
     ) -> Result<bool, LifecycleError> {
         let hooks = self
             .codex
             .list_hooks(plugin_root)
             .map_err(|_| LifecycleError::HookConfiguration)?;
-        let plugin_hooks = hooks
-            .into_iter()
-            .filter(|hook| hook.plugin_id.as_deref() == Some(plugin_id))
-            .collect::<Vec<_>>();
-        if plugin_hooks.is_empty() {
-            return Ok(true);
-        }
-        Ok(reviewed_plugin_hooks(plugin_hooks, plugin_id, plugin_root)?
-            .iter()
-            .all(|hook| !hook.enabled))
+        recorded_hooks_inactive(hooks, recorded_hooks, plugin_id, true)
     }
 
     fn finish_uninstall(&self, plugin_id: &str, plugin_root: &Path) -> Result<(), LifecycleError> {

@@ -1,6 +1,6 @@
-# Codex Dashboard for ZECTRIX 0.1.1
+# Codex Dashboard for ZECTRIX 0.1.2
 
-Adds support for the current NOTE4 board identifier `zectrix-s3-epaper-4.2`, while retaining compatibility with the legacy API identifier. Also accepts the current Codex hook schema when `executionMode` is omitted.
+Stores the ZECTRIX API Key through the native macOS Security framework without a second terminal prompt. Updates now tolerate Codex switching marketplace metadata to the future plugin root while preserving exact hook key and hash checks.
 
 MVP limitations:
 

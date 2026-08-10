@@ -421,6 +421,34 @@ fn update_rejects_reusing_the_cached_executable_path() {
 }
 
 #[test]
+fn update_accepts_an_eager_marketplace_switch_to_the_future_plugin_root() {
+    let fixture = LifecycleFixture::new();
+    fixture.install();
+    fs::write(&fixture.marketplace_upgraded, []).unwrap();
+
+    let output = fixture.run(&[
+        "lifecycle",
+        "update",
+        "--plugin-root",
+        fixture.new_root.to_str().unwrap(),
+        "--plugin-id",
+        "codex-zectrix-dashboard@local",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        fixture
+            .old_root
+            .join("bin/.codex-zectrix-tombstone")
+            .is_file()
+    );
+}
+
+#[test]
 fn uninstall_waits_for_the_recorded_desktop_owner_then_removes_state_and_credentials() {
     let fixture = LifecycleFixture::new();
     fixture.install();
@@ -475,6 +503,7 @@ struct LifecycleFixture {
     launch_agents_dir: std::path::PathBuf,
     ps: std::path::PathBuf,
     disabled: std::path::PathBuf,
+    marketplace_upgraded: std::path::PathBuf,
 }
 
 impl LifecycleFixture {
@@ -499,6 +528,7 @@ impl LifecycleFixture {
         let codex = temp.path().join("fake-codex");
         let disabled = temp.path().join("disabled");
         let configured = temp.path().join("configured");
+        let marketplace_upgraded = temp.path().join("marketplace-upgraded");
         let codex_log = temp.path().join("codex.log");
         executable(
             &codex,
@@ -531,6 +561,7 @@ trust=untrusted
 [ -f '{}' ] && trust=trusted
 root='{}'
 if printf '%s' "$request" | grep -Fq '{}'; then root='{}'; fi
+[ -f '{}' ] && root='{}'
 printf '{{"id":2,"result":{{"data":[{{"cwd":"/fixture","hooks":['
 first=true
 for event in postToolUse preToolUse stop userPromptSubmit; do
@@ -556,6 +587,8 @@ printf '],"warnings":[],"errors":[]}}]}}}}\n'
                 configured.display(),
                 old_root.display(),
                 new_root.display(),
+                new_root.display(),
+                marketplace_upgraded.display(),
                 new_root.display()
             ),
         );
@@ -585,6 +618,7 @@ printf '],"warnings":[],"errors":[]}}]}}}}\n'
             launch_agents_dir,
             ps,
             disabled,
+            marketplace_upgraded,
         }
     }
 

@@ -36,6 +36,17 @@ fn public_release_is_an_installable_marketplace_with_a_universal_companion() {
     assert!(architectures.contains("arm64"));
     assert!(architectures.contains("x86_64"));
 
+    let linked_frameworks = Command::new("/usr/bin/otool")
+        .args(["-L", binary])
+        .output()
+        .unwrap();
+    assert!(linked_frameworks.status.success());
+    assert!(
+        String::from_utf8(linked_frameworks.stdout)
+            .unwrap()
+            .contains("/System/Library/Frameworks/Security.framework/")
+    );
+
     let output = Command::new(binary).arg("version").output().unwrap();
     assert!(output.status.success());
     assert_eq!(
