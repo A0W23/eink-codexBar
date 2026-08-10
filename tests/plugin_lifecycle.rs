@@ -17,7 +17,7 @@ fn hook(event: &str, plugin_id: Option<&str>, hash: &str) -> HookMetadata {
         ),
         event_name: event.into(),
         handler_type: "command".into(),
-        execution_mode: "sync".into(),
+        execution_mode: Some("sync".into()),
         matcher: None,
         command: Some("\"/plugin/bin/codex-zectrix-dashboard\" hook-record".into()),
         timeout_sec: 5,
@@ -100,6 +100,42 @@ fn installation_selects_only_exact_reviewed_hooks_from_its_plugin() {
             .iter()
             .all(|hook| hook.plugin_id.as_deref() == Some("codex-zectrix-dashboard@local"))
     );
+}
+
+#[test]
+fn installation_accepts_current_codex_hooks_without_execution_mode() {
+    let mut value = serde_json::to_value(reviewed_hooks()).unwrap();
+    for hook in value.as_array_mut().unwrap() {
+        hook.as_object_mut().unwrap().remove("executionMode");
+    }
+
+    let hooks: Vec<HookMetadata> = serde_json::from_value(value).unwrap();
+    let selected = reviewed_plugin_hooks(
+        hooks,
+        "codex-zectrix-dashboard@local",
+        std::path::Path::new("/plugin"),
+    )
+    .unwrap();
+
+    assert_eq!(selected.len(), 4);
+}
+
+#[test]
+fn installation_rejects_an_explicit_non_sync_execution_mode() {
+    let mut hooks = reviewed_hooks();
+    hooks[0].execution_mode = Some("async".into());
+
+    let error = reviewed_plugin_hooks(
+        hooks,
+        "codex-zectrix-dashboard@local",
+        std::path::Path::new("/plugin"),
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        codex_zectrix_dashboard::LifecycleError::HookDefinition
+    ));
 }
 
 #[test]

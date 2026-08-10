@@ -13,7 +13,7 @@ jobs:
       CODEX_CLI_VERSION: 0.146.1
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
           components: clippy,rustfmt
@@ -22,6 +22,7 @@ jobs:
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test --locked --all-features
       - run: ./scripts/build-release.sh
+      - run: git diff --exit-code -- plugin/bin/codex-zectrix-dashboard
       - run: ./scripts/test-clean-install.sh
       - uses: actions/upload-artifact@v4
         with:

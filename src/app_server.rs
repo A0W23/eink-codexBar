@@ -210,7 +210,7 @@ pub struct HookMetadata {
     pub key: String,
     pub event_name: String,
     pub handler_type: String,
-    pub execution_mode: String,
+    pub execution_mode: Option<String>,
     pub matcher: Option<String>,
     pub command: Option<String>,
     pub timeout_sec: u64,

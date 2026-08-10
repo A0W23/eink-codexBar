@@ -83,7 +83,10 @@ pub fn reviewed_plugin_hooks(
     if selected.iter().any(|hook| {
         hook.is_managed
             || hook.handler_type != "command"
-            || hook.execution_mode != "sync"
+            || hook
+                .execution_mode
+                .as_deref()
+                .is_some_and(|mode| mode != "sync")
             || hook.matcher.is_some()
             || hook.command.as_deref() != Some(expected_command.as_str())
             || hook.timeout_sec != 5
