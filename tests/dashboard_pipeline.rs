@@ -1,6 +1,6 @@
 use codex_zectrix_dashboard::{
     ActivityState, DashboardConfig, ObservedDashboardState, ObservedQuotaWindow, ObservedTask,
-    PublishDecision, render_dashboard,
+    PublishDecision, normalize_dashboard, render_dashboard, render_normalized_dashboard,
 };
 
 fn sample_state() -> ObservedDashboardState {
@@ -27,8 +27,9 @@ fn sample_state() -> ObservedDashboardState {
 
 #[test]
 fn renders_a_400_by_300_monochrome_frame_and_requests_first_publish() {
-    let output =
-        render_dashboard(sample_state(), 1_786_330_000, DashboardConfig::default()).unwrap();
+    let config = DashboardConfig::default();
+    let normalized = normalize_dashboard(sample_state(), 1_786_330_000, &config);
+    let output = render_normalized_dashboard(normalized, 1_786_330_000, config).unwrap();
 
     assert_eq!((output.frame.width, output.frame.height), (400, 300));
     assert_eq!(output.frame.pixels.len(), 400 * 300);
@@ -104,6 +105,11 @@ fn titles_are_visible_by_default_and_hidden_in_privacy_mode() {
             .iter()
             .any(|text| text == "生成本地看板")
     );
+    let title_region = 150 * 400 + 100..180 * 400 + 380;
+    assert_ne!(
+        &visible.frame.pixels[title_region.clone()],
+        &hidden.frame.pixels[title_region]
+    );
 }
 
 #[test]
@@ -127,4 +133,46 @@ fn content_bearing_fields_never_enter_normalized_or_rendered_content() {
     ] {
         assert!(!observable.contains(marker), "leaked {marker}");
     }
+
+    let mut other_secrets = sample_state();
+    other_secrets.prompt = Some("DIFFERENT_PROMPT".into());
+    other_secrets.response = Some("DIFFERENT_RESPONSE".into());
+    other_secrets.reasoning = Some("DIFFERENT_REASONING".into());
+    other_secrets.project_path = Some("DIFFERENT_PATH".into());
+    other_secrets.tool = Some("DIFFERENT_TOOL".into());
+    other_secrets.error_text = Some("DIFFERENT_ERROR".into());
+    other_secrets.plan = Some("DIFFERENT_PLAN".into());
+    let rerendered =
+        render_dashboard(other_secrets, 1_786_330_000, DashboardConfig::default()).unwrap();
+    assert_eq!(rerendered.normalized, output.normalized);
+    assert_eq!(rerendered.frame.pixels, output.frame.pixels);
+}
+
+#[test]
+fn normalization_expires_old_ended_activity_and_reports_hidden_eligible_tasks() {
+    let mut observed = sample_state();
+    observed.tasks.push(ObservedTask::new(
+        "额外任务",
+        ActivityState::Interrupted,
+        1_786_327_000,
+    ));
+    observed.tasks.push(ObservedTask::new(
+        "过期任务",
+        ActivityState::TurnCompleted,
+        1_786_330_000 - 24 * 60 * 60 - 1,
+    ));
+
+    let normalized = normalize_dashboard(observed, 1_786_330_000, &DashboardConfig::default());
+
+    assert_eq!(normalized.tasks.len(), 3);
+    assert_eq!(normalized.hidden_task_count, 1);
+    assert!(
+        normalized
+            .tasks
+            .iter()
+            .all(|task| task.title.as_deref() != Some("过期任务"))
+    );
+    let rendered =
+        render_normalized_dashboard(normalized, 1_786_330_000, DashboardConfig::default()).unwrap();
+    assert!(rendered.visible_text.iter().any(|text| text == "另有 1 项"));
 }

@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::convert::Infallible;
 use std::path::Path;
 
@@ -111,13 +112,16 @@ pub struct NormalizedTask {
 pub struct NormalizedDashboardState {
     pub quota: NormalizedQuotaWindow,
     pub tasks: Vec<NormalizedTask>,
+    pub hidden_task_count: usize,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct DashboardConfig {
+pub struct DisplayConfig {
     pub privacy_mode: bool,
     pub previous_frame_hash: Option<String>,
 }
+
+pub type DashboardConfig = DisplayConfig;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PublishDecision {
@@ -162,13 +166,32 @@ pub enum DashboardError {
 pub fn render_dashboard(
     observed: ObservedDashboardState,
     now_epoch_seconds: i64,
-    config: DashboardConfig,
+    config: DisplayConfig,
 ) -> Result<DashboardOutput, DashboardError> {
+    let normalized = normalize_dashboard(observed, now_epoch_seconds, &config);
+    render_normalized_dashboard(normalized, now_epoch_seconds, config)
+}
+
+pub fn normalize_dashboard(
+    observed: ObservedDashboardState,
+    now_epoch_seconds: i64,
+    config: &DisplayConfig,
+) -> NormalizedDashboardState {
     let mut tasks = observed.tasks;
-    tasks.sort_by_key(|task| (task.state.priority(), -task.activity_at_epoch_seconds));
+    tasks.retain(|task| {
+        task.state == ActivityState::Running
+            || now_epoch_seconds.saturating_sub(task.activity_at_epoch_seconds) <= 24 * 60 * 60
+    });
+    tasks.sort_by_key(|task| {
+        (
+            task.state.priority(),
+            Reverse(task.activity_at_epoch_seconds),
+        )
+    });
+    let hidden_task_count = tasks.len().saturating_sub(3);
     tasks.truncate(3);
 
-    let normalized = NormalizedDashboardState {
+    NormalizedDashboardState {
         quota: NormalizedQuotaWindow {
             name: observed.quota.name,
             used_percent: observed.quota.used_percent.min(100),
@@ -182,8 +205,15 @@ pub fn render_dashboard(
                 state: task.state,
             })
             .collect(),
-    };
+        hidden_task_count,
+    }
+}
 
+pub fn render_normalized_dashboard(
+    normalized: NormalizedDashboardState,
+    now_epoch_seconds: i64,
+    config: DisplayConfig,
+) -> Result<DashboardOutput, DashboardError> {
     let (pixels, visible_text) = draw_dashboard(&normalized, now_epoch_seconds)?;
     let sha256 = format!("{:x}", Sha256::digest(&pixels));
     let publish_decision = if config.previous_frame_hash.as_deref() == Some(&sha256) {
@@ -272,6 +302,12 @@ fn draw_dashboard(
                 .draw_styled(&PrimitiveStyle::with_fill(BinaryColor::On), &mut display)
                 .unwrap();
         }
+    }
+
+    if state.hidden_task_count > 0 {
+        let overflow = format!("另有 {} 项", state.hidden_task_count);
+        draw_text(&text_font, overflow.as_str(), 286, 286, &mut display)?;
+        visible.push(overflow);
     }
 
     Ok((display.pixels, visible))
