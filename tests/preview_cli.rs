@@ -1,4 +1,5 @@
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 use std::{fs, os::unix::fs::PermissionsExt};
 
 #[test]
@@ -34,6 +35,7 @@ fn live_preview_reads_the_official_app_server_quota_and_writes_a_frame() {
     let output_dir = tempfile::tempdir().unwrap();
     let server = output_dir.path().join("fake-codex");
     let output_path = output_dir.path().join("live.png");
+    let data_dir = output_dir.path().join("data");
     fs::write(
         &server,
         r#"#!/bin/sh
@@ -52,6 +54,7 @@ printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":37,"wind
     let status = Command::new(env!("CARGO_BIN_EXE_codex-zectrix-dashboard"))
         .args(["live-preview", "--output", output_path.to_str().unwrap()])
         .env("CODEX_ZECTRIX_CODEX_BIN", &server)
+        .env("CODEX_ZECTRIX_DATA_DIR", &data_dir)
         .status()
         .unwrap();
 
@@ -65,10 +68,42 @@ printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":37,"wind
     let stale_status = Command::new(env!("CARGO_BIN_EXE_codex-zectrix-dashboard"))
         .args(["live-preview", "--output", output_path.to_str().unwrap()])
         .env("CODEX_ZECTRIX_CODEX_BIN", &server)
+        .env("CODEX_ZECTRIX_DATA_DIR", &data_dir)
         .status()
         .unwrap();
 
     assert!(stale_status.success());
     assert_ne!(fs::read(output_path).unwrap(), fresh_bytes);
-    assert!(output_dir.path().join("live.quota.json").is_file());
+    assert!(data_dir.join("quota.json").is_file());
+}
+
+#[test]
+fn hook_record_command_persists_no_raw_hook_content() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_codex-zectrix-dashboard"))
+        .arg("hook-record")
+        .env("CODEX_ZECTRIX_DATA_DIR", temp.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(
+            br#"{"hook_event_name":"UserPromptSubmit","session_id":"task-1","prompt":"SECRET_PROMPT","tool_input":"SECRET_TOOL"}"#,
+        )
+        .unwrap();
+
+    let output = child.wait_with_output().unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+    let persisted = fs::read_to_string(temp.path().join("hook-events.jsonl")).unwrap();
+    assert!(!persisted.contains("task-1"));
+    assert!(!persisted.contains("SECRET_PROMPT"));
+    assert!(!persisted.contains("SECRET_TOOL"));
 }

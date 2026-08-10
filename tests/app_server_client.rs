@@ -1,7 +1,7 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
-use codex_zectrix_dashboard::AppServerClient;
+use codex_zectrix_dashboard::{AppServerClient, CorrelationKey};
 
 #[test]
 fn standalone_client_initializes_then_reads_quota_without_other_requests() {
@@ -76,4 +76,60 @@ printf '%s\n' '{"id":1,"error":{"message":"SECRET_TOKEN_MARKER","accessToken":"S
     let error = AppServerClient::new(&server).read_quota().unwrap_err();
 
     assert!(!error.to_string().contains("SECRET_TOKEN_MARKER"));
+}
+
+#[test]
+fn standalone_client_reads_official_titles_without_rollout_scan_or_repair() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = temp.path().join("fake-codex");
+    let requests = temp.path().join("requests.jsonl");
+    let script = format!(
+        r#"#!/bin/sh
+read -r initialize
+printf '%s\n' "$initialize" >> '{}'
+printf '%s\n' '{{"id":1,"result":{{"userAgent":"fake"}}}}'
+read -r initialized
+printf '%s\n' "$initialized" >> '{}'
+read -r threads
+printf '%s\n' "$threads" >> '{}'
+printf '%s\n' '{{"id":2,"result":{{"data":[{{"id":"task-1","name":"官方任务标题","parentThreadId":null,"source":"appServer","preview":"SECRET_PROMPT","cwd":"SECRET_PATH"}}],"nextCursor":null}}}}'
+"#,
+        requests.display(),
+        requests.display(),
+        requests.display()
+    );
+    fs::write(&server, script).unwrap();
+    let mut permissions = fs::metadata(&server).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&server, permissions).unwrap();
+
+    let tasks = AppServerClient::new(&server)
+        .read_task_metadata("test-installation")
+        .unwrap();
+
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].title, "官方任务标题");
+    assert_eq!(
+        tasks[0].correlation,
+        CorrelationKey::derive("task-1", "test-installation")
+    );
+    let messages: Vec<serde_json::Value> = fs::read_to_string(requests)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(messages.len(), 3);
+    assert_eq!(messages[2]["method"], "thread/list");
+    assert_eq!(messages[2]["params"]["useStateDbOnly"], true);
+    assert_eq!(messages[2]["params"]["sortKey"], "updated_at");
+    assert_eq!(messages[2]["params"]["sortDirection"], "desc");
+    assert_eq!(messages[2]["params"]["archived"], false);
+    assert!(
+        messages[2]["params"]["sourceKinds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|source| source == "subAgent")
+    );
+    assert!(!format!("{tasks:?}").contains("SECRET_"));
 }

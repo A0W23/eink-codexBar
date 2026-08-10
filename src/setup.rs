@@ -166,6 +166,7 @@ fn render_pending_preview(
     let output = render_dashboard(
         ObservedDashboardState {
             quota,
+            task_activity_stale: false,
             tasks: Vec::new(),
             prompt: None,
             response: None,

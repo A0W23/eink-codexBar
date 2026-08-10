@@ -7,7 +7,10 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use thiserror::Error;
 
-use crate::{DashboardError, ObservedQuota, parse_app_server_quota};
+use crate::{
+    ActivitySourceError, DashboardError, ObservedQuota, OfficialTaskMetadata,
+    parse_app_server_quota, parse_app_server_tasks,
+};
 
 #[derive(Clone, Debug)]
 pub struct AppServerClient {
@@ -22,6 +25,38 @@ impl AppServerClient {
     }
 
     pub fn read_quota(&self) -> Result<ObservedQuota, AppServerError> {
+        let result = self.read_only_request(json!({
+            "id": 2,
+            "method": "account/rateLimits/read",
+            "params": null
+        }))?;
+        parse_app_server_quota(&serde_json::to_string(&result)?).map_err(AppServerError::Quota)
+    }
+
+    pub fn read_task_metadata(
+        &self,
+        installation_salt: &str,
+    ) -> Result<Vec<OfficialTaskMetadata>, AppServerError> {
+        let result = self.read_only_request(json!({
+            "id": 2,
+            "method": "thread/list",
+            "params": {
+                "limit": 100,
+                "sortKey": "updated_at",
+                "sortDirection": "desc",
+                "archived": false,
+                "sourceKinds": [
+                    "cli", "vscode", "exec", "appServer", "subAgent", "subAgentReview",
+                    "subAgentCompact", "subAgentThreadSpawn", "subAgentOther", "unknown"
+                ],
+                "useStateDbOnly": true
+            }
+        }))?;
+        parse_app_server_tasks(&serde_json::to_string(&result)?, installation_salt)
+            .map_err(AppServerError::Activity)
+    }
+
+    fn read_only_request(&self, request: Value) -> Result<Value, AppServerError> {
         let mut child = Command::new(&self.program)
             .args(["app-server", "--stdio"])
             .stdin(Stdio::piped())
@@ -57,12 +92,8 @@ impl AppServerClient {
             read_result(&receiver, 1)?;
 
             write_message(&mut stdin, &json!({ "method": "initialized" }))?;
-            write_message(
-                &mut stdin,
-                &json!({ "id": 2, "method": "account/rateLimits/read", "params": null }),
-            )?;
-            let result = read_result(&receiver, 2)?;
-            parse_app_server_quota(&serde_json::to_string(&result)?).map_err(AppServerError::Quota)
+            write_message(&mut stdin, &request)?;
+            read_result(&receiver, 2)
         })();
 
         drop(stdin);
@@ -132,4 +163,6 @@ pub enum AppServerError {
     MissingResult,
     #[error(transparent)]
     Quota(#[from] DashboardError),
+    #[error(transparent)]
+    Activity(#[from] ActivitySourceError),
 }

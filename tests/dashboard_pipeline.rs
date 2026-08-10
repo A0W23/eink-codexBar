@@ -15,6 +15,7 @@ fn sample_state() -> ObservedDashboardState {
             reset_credits: 0,
             stale: false,
         },
+        task_activity_stale: false,
         tasks: vec![
             ObservedTask::new("生成本地看板", ActivityState::Running, 1_786_330_000),
             ObservedTask::new("修复配额布局", ActivityState::TurnCompleted, 1_786_329_000),
@@ -30,9 +31,27 @@ fn sample_state() -> ObservedDashboardState {
     }
 }
 
+#[test]
+fn stale_task_activity_is_visible_without_changing_turn_semantics() {
+    let mut state = sample_state();
+    state.task_activity_stale = true;
+
+    let output = render_dashboard(state, 1_786_330_000, DashboardConfig::default()).unwrap();
+
+    assert!(output.normalized.task_activity_stale);
+    assert!(
+        output
+            .visible_text
+            .iter()
+            .any(|text| text == "任务数据可能已过期")
+    );
+    assert!(output.visible_text.iter().any(|text| text == "本轮完成"));
+}
+
 fn state_with_quota(quota: ObservedQuota) -> ObservedDashboardState {
     ObservedDashboardState {
         quota,
+        task_activity_stale: false,
         tasks: sample_state().tasks,
         prompt: None,
         response: None,
