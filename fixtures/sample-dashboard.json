@@ -1,0 +1,24 @@
+{
+  "quota": {
+    "name": "5 小时",
+    "used_percent": 37,
+    "resets_at_epoch_seconds": 1786337200
+  },
+  "tasks": [
+    {
+      "title": "生成本地看板",
+      "state": "running",
+      "activity_at_epoch_seconds": 1786330000
+    },
+    {
+      "title": "修复配额布局",
+      "state": "turn_completed",
+      "activity_at_epoch_seconds": 1786329000
+    },
+    {
+      "title": "检查隐私模式",
+      "state": "failed",
+      "activity_at_epoch_seconds": 1786328000
+    }
+  ]
+}
