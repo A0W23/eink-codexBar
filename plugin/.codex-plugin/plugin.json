@@ -5,5 +5,19 @@
   "author": {
     "name": "Barry Barry Wu"
   },
-  "license": "MIT"
+  "homepage": "https://github.com/BarryBarrywu/codex-zectrix-dashboard",
+  "repository": "https://github.com/BarryBarrywu/codex-zectrix-dashboard",
+  "license": "MIT",
+  "keywords": ["codex", "zectrix", "note4", "e-ink", "dashboard"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex Dashboard for ZECTRIX",
+    "shortDescription": "Show Codex quota and task status on ZECTRIX NOTE4",
+    "longDescription": "Display Codex quota and privacy-constrained task activity on a ZECTRIX NOTE4 through a bundled macOS companion.",
+    "developerName": "Barry Barry Wu",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "websiteURL": "https://github.com/BarryBarrywu/codex-zectrix-dashboard",
+    "defaultPrompt": ["Set up my Codex Dashboard for ZECTRIX NOTE4"]
+  }
 }

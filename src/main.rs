@@ -20,6 +20,31 @@ const SUPPORTED_CLI_VERSION: &str = "0.147.0-alpha.6.5";
 const SUPPORTED_SCHEMA_SHA256: &str =
     "cb29555a6be238d57dc4a1a8171f1107aa7b5bb0e9fb97a33c0ca112f3d37452";
 
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum QuotaSourceStatus {
+    Current,
+    Stale,
+    #[default]
+    Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum TaskActivitySourceStatus {
+    Inferred,
+    Stale,
+    #[default]
+    Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SourceStatus {
+    quota: QuotaSourceStatus,
+    task_activity: TaskActivitySourceStatus,
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("{error}");
@@ -32,6 +57,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let command = args
         .next()
         .ok_or("用法：codex-zectrix-dashboard <preview|live-preview|setup|companion> ...")?;
+    if command == "version" {
+        if args.next().is_some() {
+            return Err("version 不接受命令行参数".into());
+        }
+        println!(env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if command == "diagnostics" {
+        if args.next().is_some() {
+            return Err("diagnostics 不接受命令行参数".into());
+        }
+        return run_diagnostics();
+    }
     if command == "setup" {
         if args.next().is_some() {
             return Err("setup 不接受命令行参数".into());
@@ -138,6 +176,28 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     dashboard.frame.write_png(&output)?;
     println!("{}  {}", dashboard.frame.sha256, output.display());
+    Ok(())
+}
+
+fn run_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
+    let path = data_dir()?.join("source-status.json");
+    let status = fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<SourceStatus>(&bytes).ok())
+        .unwrap_or_default();
+    println!(
+        "quota_source={}\ntask_activity_source={}",
+        match status.quota {
+            QuotaSourceStatus::Current => "current",
+            QuotaSourceStatus::Stale => "stale",
+            QuotaSourceStatus::Unavailable => "unavailable",
+        },
+        match status.task_activity {
+            TaskActivitySourceStatus::Inferred => "inferred",
+            TaskActivitySourceStatus::Stale => "stale",
+            TaskActivitySourceStatus::Unavailable => "unavailable",
+        }
+    );
     Ok(())
 }
 
@@ -279,6 +339,11 @@ fn run_companion() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .and_then(|bytes| serde_json::from_slice::<PublisherState>(&bytes).ok())
         .unwrap_or_default();
+    let source_status_path = data_dir.join("source-status.json");
+    let mut source_status = fs::read(&source_status_path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<SourceStatus>(&bytes).ok())
+        .unwrap_or_default();
     let mut coordinator = PublishCoordinator::new(
         DashboardConfig {
             privacy_mode: settings.privacy_mode,
@@ -302,6 +367,7 @@ fn run_companion() -> Result<(), Box<dyn std::error::Error>> {
         let now_epoch_seconds = current_epoch_seconds()?;
         let quota = match client.read_quota() {
             Ok(quota) => {
+                source_status.quota = QuotaSourceStatus::Current;
                 let mut quota = quota_cache.update::<std::convert::Infallible>(Ok(quota))?;
                 if write_json_atomically(&quota_cache_path, &quota).is_err() {
                     quota.stale = true;
@@ -310,8 +376,13 @@ fn run_companion() -> Result<(), Box<dyn std::error::Error>> {
                 quota
             }
             Err(error) => match quota_cache.update(Err(error)) {
-                Ok(quota) => quota,
+                Ok(quota) => {
+                    source_status.quota = QuotaSourceStatus::Stale;
+                    quota
+                }
                 Err(_) => {
+                    source_status.quota = QuotaSourceStatus::Unavailable;
+                    let _ = write_json_atomically(&source_status_path, &source_status);
                     eprintln!("observation_unavailable");
                     if finish_cycle(&mut cycles, max_cycles, poll_interval) {
                         break;
@@ -324,14 +395,24 @@ fn run_companion() -> Result<(), Box<dyn std::error::Error>> {
             Ok(snapshot) => {
                 has_activity = true;
                 let mut snapshot = activity_cache.update::<std::convert::Infallible>(Ok(snapshot));
+                source_status.task_activity = if snapshot.stale {
+                    TaskActivitySourceStatus::Stale
+                } else {
+                    TaskActivitySourceStatus::Inferred
+                };
                 if write_json_atomically(&activity_cache_path, &snapshot.tasks).is_err() {
                     snapshot.stale = true;
                     eprintln!("state_persist_unavailable");
                 }
                 snapshot
             }
-            Err(error) if has_activity => activity_cache.update(Err(error)),
+            Err(error) if has_activity => {
+                source_status.task_activity = TaskActivitySourceStatus::Stale;
+                activity_cache.update(Err(error))
+            }
             Err(_) => {
+                source_status.task_activity = TaskActivitySourceStatus::Unavailable;
+                let _ = write_json_atomically(&source_status_path, &source_status);
                 eprintln!("observation_unavailable");
                 if finish_cycle(&mut cycles, max_cycles, poll_interval) {
                     break;
@@ -339,6 +420,9 @@ fn run_companion() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
         };
+        if write_json_atomically(&source_status_path, &source_status).is_err() {
+            eprintln!("state_persist_unavailable");
+        }
         coordinator.observe(
             ObservedDashboardState {
                 quota,

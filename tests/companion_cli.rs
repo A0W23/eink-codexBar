@@ -54,6 +54,10 @@ fn companion_combines_cached_activity_with_live_quota_and_publishes_content_free
     let image = image::load_from_memory(png).unwrap().to_luma8();
     assert_eq!(image.dimensions(), (400, 300));
     assert!(data_dir.join("publisher-state.json").is_file());
+    let source_status: serde_json::Value =
+        serde_json::from_slice(&fs::read(data_dir.join("source-status.json")).unwrap()).unwrap();
+    assert_eq!(source_status["quota"], "current");
+    assert_eq!(source_status["taskActivity"], "stale");
 
     let codex_requests = fs::read_to_string(codex_log).unwrap();
     assert!(codex_requests.contains("account/rateLimits/read"));

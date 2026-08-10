@@ -1,0 +1,20 @@
+{
+  "name": "codex-zectrix-dashboard",
+  "interface": {
+    "displayName": "Codex Dashboard for ZECTRIX"
+  },
+  "plugins": [
+    {
+      "name": "codex-zectrix-dashboard",
+      "source": {
+        "source": "local",
+        "path": "./plugin"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

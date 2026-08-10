@@ -1,0 +1,27 @@
+name: Release validation
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          components: clippy,rustfmt
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --all-features
+      - run: ./scripts/build-release.sh
+      - run: ./scripts/test-clean-install.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-zectrix-dashboard-macos
+          path: target/codex-zectrix-dashboard-*-macos.tar.gz
+          if-no-files-found: error
