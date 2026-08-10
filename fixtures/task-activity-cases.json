@@ -1,0 +1,96 @@
+{
+  "now": 1786330000,
+  "reductions": [
+    {
+      "name": "running_to_completed",
+      "events": [
+        { "kind": "rollout_started", "age_seconds": 20 },
+        { "kind": "turn_stopped", "age_seconds": 10 }
+      ],
+      "expected_state": "turn_completed"
+    },
+    {
+      "name": "running_to_failed",
+      "events": [
+        { "kind": "rollout_started", "age_seconds": 20 },
+        { "kind": "turn_failed", "age_seconds": 10 }
+      ],
+      "expected_state": "failed"
+    },
+    {
+      "name": "running_to_interrupted",
+      "events": [
+        { "kind": "rollout_started", "age_seconds": 20 },
+        { "kind": "turn_interrupted", "age_seconds": 10 }
+      ],
+      "expected_state": "interrupted"
+    },
+    {
+      "name": "completed_to_running",
+      "events": [
+        { "kind": "turn_stopped", "age_seconds": 20 },
+        { "kind": "user_submission", "age_seconds": 10 }
+      ],
+      "expected_state": "running"
+    },
+    {
+      "name": "failed_to_running",
+      "events": [
+        { "kind": "turn_failed", "age_seconds": 20 },
+        { "kind": "user_submission", "age_seconds": 10 }
+      ],
+      "expected_state": "running"
+    },
+    {
+      "name": "interrupted_to_running",
+      "events": [
+        { "kind": "turn_interrupted", "age_seconds": 20 },
+        { "kind": "user_submission", "age_seconds": 10 }
+      ],
+      "expected_state": "running"
+    },
+    {
+      "name": "completed_at_expiry_boundary",
+      "events": [{ "kind": "turn_stopped", "age_seconds": 86400 }],
+      "expected_state": "turn_completed"
+    },
+    {
+      "name": "failed_at_expiry_boundary",
+      "events": [{ "kind": "turn_failed", "age_seconds": 86400 }],
+      "expected_state": "failed"
+    },
+    {
+      "name": "interrupted_at_expiry_boundary",
+      "events": [{ "kind": "turn_interrupted", "age_seconds": 86400 }],
+      "expected_state": "interrupted"
+    },
+    {
+      "name": "completed_after_expiry_boundary",
+      "events": [{ "kind": "turn_stopped", "age_seconds": 86401 }],
+      "expected_state": null
+    },
+    {
+      "name": "failed_after_expiry_boundary",
+      "events": [{ "kind": "turn_failed", "age_seconds": 86401 }],
+      "expected_state": null
+    },
+    {
+      "name": "interrupted_after_expiry_boundary",
+      "events": [{ "kind": "turn_interrupted", "age_seconds": 86401 }],
+      "expected_state": null
+    }
+  ],
+  "selection": {
+    "tasks": [
+      { "title": "甲执行", "state": "running", "activity_at_epoch_seconds": 1786328000 },
+      { "title": "乙执行", "state": "running", "activity_at_epoch_seconds": 1786328000 },
+      { "title": "较早失败", "state": "failed", "activity_at_epoch_seconds": 1786329000 },
+      { "title": "较新失败", "state": "failed", "activity_at_epoch_seconds": 1786329500 },
+      { "title": "已中断", "state": "interrupted", "activity_at_epoch_seconds": 1786330000 },
+      { "title": "本轮完成", "state": "turn_completed", "activity_at_epoch_seconds": 1786330000 }
+    ],
+    "expected_titles": ["甲执行", "乙执行", "较新失败"],
+    "expected_states": ["running", "running", "failed"],
+    "hidden_task_count": 3
+  }
+}

@@ -157,7 +157,11 @@ fn rollout_observation_reads_minimal_lifecycle_envelopes_without_modifying_codex
             "{\"type\":\"session_meta\",\"payload\":{\"id\":\"different-thread-id\",\"session_id\":\"task-1\",\"cli_version\":\"0.147.0-alpha.6.5\",\"cwd\":\"SECRET_PATH\"}}\n",
             "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"started_at\":1786329980,\"turn_id\":\"SECRET_TURN\"}}\n",
             "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"content\":\"SECRET_RESPONSE\"}}\n",
-            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"completed_at\":1786329990,\"last_agent_message\":\"SECRET_RESULT\"}}\n"
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"completed_at\":1786329990,\"last_agent_message\":\"SECRET_RESULT\"}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"started_at\":1786329991}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"completed_at\":1786329992,\"error\":\"SECRET_ERROR\"}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"started_at\":1786329993}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"turn_aborted\",\"reason\":\"interrupted\",\"completed_at\":1786329994}}\n"
         ),
     )
     .unwrap();
@@ -184,14 +188,36 @@ fn rollout_observation_reads_minimal_lifecycle_envelopes_without_modifying_codex
 
     let events = observer.observe().unwrap();
 
-    assert_eq!(events.len(), 4);
-    assert_eq!(events[0].kind, ActivityEventKind::RolloutStarted);
-    assert_eq!(events[1].kind, ActivityEventKind::RolloutStarted);
-    assert_eq!(events[2].kind, ActivityEventKind::TurnStopped);
-    assert_eq!(events[3].kind, ActivityEventKind::TurnStopped);
+    assert_eq!(events.len(), 12);
+    assert_eq!(
+        events
+            .chunks_exact(2)
+            .map(|pair| pair[0].kind)
+            .collect::<Vec<_>>(),
+        vec![
+            ActivityEventKind::RolloutStarted,
+            ActivityEventKind::TurnStopped,
+            ActivityEventKind::RolloutStarted,
+            ActivityEventKind::TurnFailed,
+            ActivityEventKind::RolloutStarted,
+            ActivityEventKind::TurnInterrupted,
+        ]
+    );
+    assert!(
+        events
+            .chunks_exact(2)
+            .all(|pair| pair[0].kind == pair[1].kind)
+    );
     assert_eq!(before, inventory(temp.path()));
     let diagnostic = format!("{events:?}");
-    for secret in ["task-1", "SECRET_PATH", "SECRET_TURN", "SECRET_RESPONSE"] {
+    for secret in [
+        "task-1",
+        "SECRET_PATH",
+        "SECRET_TURN",
+        "SECRET_RESPONSE",
+        "SECRET_RESULT",
+        "SECRET_ERROR",
+    ] {
         assert!(!diagnostic.contains(secret));
     }
 }
@@ -260,6 +286,30 @@ fn rollout_observation_fails_closed_for_version_schema_or_lifecycle_drift() {
             .observe()
             .is_err()
     );
+
+    for abort in [
+        "{\"type\":\"event_msg\",\"payload\":{\"type\":\"turn_aborted\",\"completed_at\":1786329990}}",
+        "{\"type\":\"event_msg\",\"payload\":{\"type\":\"turn_aborted\",\"reason\":\"future_reason\",\"completed_at\":1786329990}}",
+    ] {
+        fs::write(
+            &rollout,
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"different-thread-id\",\"session_id\":\"task-1\",\"cli_version\":\"0.147.0-alpha.6.5\"}}}}\n{abort}\n"
+            ),
+        )
+        .unwrap();
+        let unsupported_abort = ReadonlyObservationConfig {
+            codex_home: temp.path().to_owned(),
+            installation_salt: SALT.into(),
+            supported_cli_version: "0.147.0-alpha.6.5".into(),
+            supported_schema_sha256: compute_state_schema_fingerprint(temp.path()).unwrap(),
+        };
+        assert!(
+            ReadonlyRolloutObserver::new(unsupported_abort)
+                .observe()
+                .is_err()
+        );
+    }
 
     let wrong_schema = ReadonlyObservationConfig {
         codex_home: temp.path().to_owned(),

@@ -2,6 +2,26 @@ use codex_zectrix_dashboard::{
     ActivityEvent, ActivityEventKind, ActivityState, CorrelationKey, OfficialTaskMetadata,
     TaskActivityCache, TaskActivitySnapshot, reduce_task_activity,
 };
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct TaskActivityFixture {
+    now: i64,
+    reductions: Vec<ReductionFixture>,
+}
+
+#[derive(Deserialize)]
+struct ReductionFixture {
+    name: String,
+    events: Vec<EventFixture>,
+    expected_state: Option<ActivityState>,
+}
+
+#[derive(Deserialize)]
+struct EventFixture {
+    kind: ActivityEventKind,
+    age_seconds: i64,
+}
 
 const NOW: i64 = 1_786_330_000;
 
@@ -62,18 +82,33 @@ fn normal_stop_replaces_running_without_claiming_any_task_completion_semantic() 
 }
 
 #[test]
-fn a_new_execution_replaces_the_same_tasks_ended_turn() {
-    let snapshot = reduce_task_activity(
-        [task("task-1", "实现任务动态")],
-        [
-            event("task-1", ActivityEventKind::TurnStopped, NOW - 20),
-            event("task-1", ActivityEventKind::UserSubmission, NOW - 10),
-        ],
-        NOW,
-    );
+fn task_activity_fixture_covers_transitions_and_expiry_boundaries() {
+    let fixture: TaskActivityFixture =
+        serde_json::from_str(include_str!("../fixtures/task-activity-cases.json")).unwrap();
+    let correlation = CorrelationKey::derive("fixture-task", "test-installation");
+    let metadata = OfficialTaskMetadata {
+        correlation: correlation.clone(),
+        correlation_aliases: Vec::new(),
+        title: "fixture task".into(),
+        parent_correlation: None,
+    };
 
-    assert_eq!(snapshot.tasks.len(), 1);
-    assert_eq!(snapshot.tasks[0].state, ActivityState::Running);
+    for case in fixture.reductions {
+        let events = case.events.into_iter().map(|event| ActivityEvent {
+            correlation: correlation.clone(),
+            kind: event.kind,
+            observed_at_epoch_seconds: fixture.now - event.age_seconds,
+        });
+        let snapshot = reduce_task_activity([metadata.clone()], events, fixture.now);
+
+        assert_eq!(
+            snapshot.tasks.first().map(|task| task.state),
+            case.expected_state,
+            "{}",
+            case.name
+        );
+        assert!(snapshot.tasks.len() <= 1, "{}", case.name);
+    }
 }
 
 #[test]
@@ -114,31 +149,6 @@ fn unmatched_running_edges_expire_instead_of_running_forever() {
 
     assert!(snapshot.tasks.is_empty());
     assert!(snapshot.stale);
-}
-
-#[test]
-fn ended_turns_remain_for_exactly_twenty_four_hours() {
-    let visible = reduce_task_activity(
-        [task("task-1", "实现任务动态")],
-        [event(
-            "task-1",
-            ActivityEventKind::TurnStopped,
-            NOW - 24 * 60 * 60,
-        )],
-        NOW,
-    );
-    let expired = reduce_task_activity(
-        [task("task-1", "实现任务动态")],
-        [event(
-            "task-1",
-            ActivityEventKind::TurnStopped,
-            NOW - 24 * 60 * 60 - 1,
-        )],
-        NOW,
-    );
-
-    assert_eq!(visible.tasks.len(), 1);
-    assert!(expired.tasks.is_empty());
 }
 
 #[test]

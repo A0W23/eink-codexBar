@@ -93,7 +93,7 @@ fn hook_record_command_persists_no_raw_hook_content() {
         .take()
         .unwrap()
         .write_all(
-            br#"{"hook_event_name":"UserPromptSubmit","session_id":"task-1","prompt":"SECRET_PROMPT","tool_input":"SECRET_TOOL"}"#,
+            br#"{"hook_event_name":"Stop","session_id":"task-1","status":"failed","prompt":"SECRET_PROMPT","response":"SECRET_RESPONSE","reasoning":"SECRET_REASONING","path":"SECRET_PATH","tool":"SECRET_TOOL","result":"SECRET_RESULT","plan":"SECRET_PLAN","error":"SECRET_ERROR"}"#,
         )
         .unwrap();
 
@@ -103,7 +103,17 @@ fn hook_record_command_persists_no_raw_hook_content() {
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
     let persisted = fs::read_to_string(temp.path().join("hook-events.jsonl")).unwrap();
-    assert!(!persisted.contains("task-1"));
-    assert!(!persisted.contains("SECRET_PROMPT"));
-    assert!(!persisted.contains("SECRET_TOOL"));
+    for secret in [
+        "task-1",
+        "SECRET_PROMPT",
+        "SECRET_RESPONSE",
+        "SECRET_REASONING",
+        "SECRET_PATH",
+        "SECRET_TOOL",
+        "SECRET_RESULT",
+        "SECRET_PLAN",
+        "SECRET_ERROR",
+    ] {
+        assert!(!persisted.contains(secret));
+    }
 }

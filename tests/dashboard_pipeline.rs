@@ -3,6 +3,21 @@ use codex_zectrix_dashboard::{
     ObservedTask, PublishDecision, QuotaCache, normalize_dashboard, parse_app_server_quota,
     render_dashboard, render_normalized_dashboard,
 };
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct TaskActivityFixture {
+    now: i64,
+    selection: SelectionFixture,
+}
+
+#[derive(Deserialize)]
+struct SelectionFixture {
+    tasks: Vec<ObservedTask>,
+    expected_titles: Vec<String>,
+    expected_states: Vec<ActivityState>,
+    hidden_task_count: usize,
+}
 
 fn sample_state() -> ObservedDashboardState {
     ObservedDashboardState {
@@ -213,6 +228,57 @@ fn normalization_expires_old_ended_activity_and_reports_hidden_eligible_tasks() 
     let rendered =
         render_normalized_dashboard(normalized, 1_786_330_000, DashboardConfig::default()).unwrap();
     assert!(rendered.visible_text.iter().any(|text| text == "另有 1 项"));
+}
+
+#[test]
+fn task_selection_uses_state_priority_recency_and_preserves_recency_ties() {
+    let fixture: TaskActivityFixture =
+        serde_json::from_str(include_str!("../fixtures/task-activity-cases.json")).unwrap();
+    let mut observed = sample_state();
+    observed.tasks = fixture.selection.tasks;
+
+    let visible = normalize_dashboard(observed.clone(), fixture.now, &DashboardConfig::default());
+    let hidden = normalize_dashboard(
+        observed,
+        fixture.now,
+        &DashboardConfig {
+            privacy_mode: true,
+            previous_frame_hash: None,
+        },
+    );
+
+    assert_eq!(
+        visible
+            .tasks
+            .iter()
+            .map(|task| (task.title.as_deref(), task.state))
+            .collect::<Vec<_>>(),
+        fixture
+            .selection
+            .expected_titles
+            .iter()
+            .zip(fixture.selection.expected_states.iter().copied())
+            .map(|(title, state)| (Some(title.as_str()), state))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        visible.hidden_task_count,
+        fixture.selection.hidden_task_count
+    );
+    assert_eq!(
+        hidden
+            .tasks
+            .iter()
+            .map(|task| task.state)
+            .collect::<Vec<_>>(),
+        visible
+            .tasks
+            .iter()
+            .map(|task| task.state)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(hidden.hidden_task_count, visible.hidden_task_count);
+    assert!(hidden.tasks.iter().all(|task| task.title.is_none()));
 }
 
 #[test]

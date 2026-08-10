@@ -368,7 +368,12 @@ fn parse_rollout(
                 Some(ActivityEventKind::TurnFailed)
             }
             "task_complete" => Some(ActivityEventKind::TurnStopped),
-            "turn_aborted" => Some(ActivityEventKind::TurnInterrupted),
+            "turn_aborted"
+                if envelope.payload.abort_reason == Some(RolloutAbortReason::Interrupted) =>
+            {
+                Some(ActivityEventKind::TurnInterrupted)
+            }
+            "turn_aborted" => return Err(ActivitySourceError::UnsupportedRollout),
             "agent_message"
             | "agent_reasoning"
             | "context_compacted"
@@ -431,4 +436,12 @@ struct RolloutPayload {
     started_at: Option<i64>,
     completed_at: Option<i64>,
     error: Option<IgnoredAny>,
+    #[serde(rename = "reason")]
+    abort_reason: Option<RolloutAbortReason>,
+}
+
+#[derive(Clone, Copy, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum RolloutAbortReason {
+    Interrupted,
 }
