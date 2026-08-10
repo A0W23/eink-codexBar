@@ -227,6 +227,26 @@ fn rollout_observation_fails_closed_for_version_schema_or_lifecycle_drift() {
             .is_err()
     );
 
+    fs::write(
+        &rollout,
+        concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"different-thread-id\",\"session_id\":\"task-1\",\"cli_version\":\"0.147.0-alpha.6.5\"}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"execution_started\",\"started_at\":1786329990}}\n"
+        ),
+    )
+    .unwrap();
+    let unknown_enum = ReadonlyObservationConfig {
+        codex_home: temp.path().to_owned(),
+        installation_salt: SALT.into(),
+        supported_cli_version: "0.147.0-alpha.6.5".into(),
+        supported_schema_sha256: compute_state_schema_fingerprint(temp.path()).unwrap(),
+    };
+    assert!(
+        ReadonlyRolloutObserver::new(unknown_enum)
+            .observe()
+            .is_err()
+    );
+
     let wrong_schema = ReadonlyObservationConfig {
         codex_home: temp.path().to_owned(),
         installation_salt: SALT.into(),

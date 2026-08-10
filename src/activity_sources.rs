@@ -338,7 +338,17 @@ fn parse_rollout(
             continue;
         }
         if envelope.envelope_type != "event_msg" {
-            continue;
+            if matches!(
+                envelope.envelope_type.as_str(),
+                "response_item"
+                    | "world_state"
+                    | "turn_context"
+                    | "inter_agent_communication_metadata"
+                    | "compacted"
+            ) {
+                continue;
+            }
+            return Err(ActivitySourceError::UnsupportedRollout);
         }
         let Some(payload_type) = envelope.payload.payload_type.as_deref() else {
             return Err(ActivitySourceError::UnsupportedRollout);
@@ -350,10 +360,19 @@ fn parse_rollout(
             }
             "task_complete" => Some(ActivityEventKind::TurnStopped),
             "turn_aborted" => Some(ActivityEventKind::TurnInterrupted),
-            value if value.starts_with("task_") || value.starts_with("turn_") => {
-                return Err(ActivitySourceError::UnsupportedRollout);
-            }
-            _ => None,
+            "agent_message"
+            | "agent_reasoning"
+            | "context_compacted"
+            | "image_generation_end"
+            | "mcp_tool_call_end"
+            | "patch_apply_end"
+            | "sub_agent_activity"
+            | "thread_rolled_back"
+            | "thread_settings_applied"
+            | "token_count"
+            | "user_message"
+            | "web_search_end" => None,
+            _ => return Err(ActivitySourceError::UnsupportedRollout),
         };
         let Some(kind) = kind else {
             continue;
