@@ -1,8 +1,14 @@
 {
   "quota": {
-    "name": "5 小时",
-    "used_percent": 37,
-    "resets_at_epoch_seconds": 1786337200
+    "windows": [
+      {
+        "name": "5 小时",
+        "used_percent": 37,
+        "resets_at_epoch_seconds": 1786337200
+      }
+    ],
+    "reset_credits": 0,
+    "stale": false
   },
   "tasks": [
     {

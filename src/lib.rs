@@ -1,3 +1,5 @@
+mod app_server;
+
 use std::cmp::Reverse;
 use std::convert::Infallible;
 use std::path::Path;
@@ -14,6 +16,8 @@ use u8g2_fonts::FontRenderer;
 use u8g2_fonts::fonts::{u8g2_font_logisoso24_tn, u8g2_font_wqy13_t_gb2312};
 use u8g2_fonts::types::{FontColor, VerticalPosition};
 
+pub use app_server::{AppServerClient, AppServerError};
+
 pub const DISPLAY_WIDTH: u32 = 400;
 pub const DISPLAY_HEIGHT: u32 = 300;
 
@@ -22,6 +26,40 @@ pub struct ObservedQuotaWindow {
     pub name: String,
     pub used_percent: u8,
     pub resets_at_epoch_seconds: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ObservedQuota {
+    pub windows: Vec<ObservedQuotaWindow>,
+    #[serde(default)]
+    pub reset_credits: u64,
+    #[serde(default)]
+    pub stale: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct QuotaCache {
+    last_known: Option<ObservedQuota>,
+}
+
+impl QuotaCache {
+    pub fn new(last_known: Option<ObservedQuota>) -> Self {
+        Self { last_known }
+    }
+
+    pub fn update<E>(
+        &mut self,
+        observation: Result<ObservedQuota, E>,
+    ) -> Result<ObservedQuota, DashboardError> {
+        match observation {
+            Ok(mut quota) => {
+                quota.stale = false;
+                self.last_known = Some(quota.clone());
+                Ok(quota)
+            }
+            Err(_) => stale_quota(self.last_known.as_ref()),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -76,7 +114,7 @@ impl ObservedTask {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ObservedDashboardState {
-    pub quota: ObservedQuotaWindow,
+    pub quota: ObservedQuota,
     pub tasks: Vec<ObservedTask>,
     #[serde(default)]
     pub prompt: Option<String>,
@@ -103,6 +141,13 @@ pub struct NormalizedQuotaWindow {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct NormalizedQuota {
+    pub windows: Vec<NormalizedQuotaWindow>,
+    pub reset_credits: u64,
+    pub stale: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct NormalizedTask {
     pub title: Option<String>,
     pub state: ActivityState,
@@ -110,7 +155,7 @@ pub struct NormalizedTask {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct NormalizedDashboardState {
-    pub quota: NormalizedQuotaWindow,
+    pub quota: NormalizedQuota,
     pub tasks: Vec<NormalizedTask>,
     pub hidden_task_count: usize,
 }
@@ -161,6 +206,94 @@ pub enum DashboardError {
     InvalidFrame,
     #[error("failed to write preview image: {0}")]
     Image(#[source] image::ImageError),
+    #[error("app-server 额度响应无效：{0}")]
+    InvalidQuota(String),
+    #[error("没有可用的上次额度数据")]
+    MissingQuota,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AppServerQuotaResponse {
+    rate_limits: AppServerRateLimits,
+    rate_limit_reset_credits: Option<AppServerResetCredits>,
+}
+
+#[derive(Deserialize)]
+struct AppServerRateLimits {
+    primary: AppServerQuotaWindow,
+    secondary: Option<AppServerQuotaWindow>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AppServerQuotaWindow {
+    used_percent: i64,
+    window_duration_mins: i64,
+    resets_at: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AppServerResetCredits {
+    available_count: i64,
+}
+
+pub fn parse_app_server_quota(response: &str) -> Result<ObservedQuota, DashboardError> {
+    let response: AppServerQuotaResponse = serde_json::from_str(response)
+        .map_err(|error| DashboardError::InvalidQuota(error.to_string()))?;
+    let mut windows = vec![normalize_observed_window(response.rate_limits.primary)?];
+    if let Some(secondary) = response.rate_limits.secondary {
+        windows.push(normalize_observed_window(secondary)?);
+    }
+    let reset_credits = response
+        .rate_limit_reset_credits
+        .map(|credits| {
+            u64::try_from(credits.available_count)
+                .map_err(|_| DashboardError::InvalidQuota("重置额度数量不能为负数".into()))
+        })
+        .transpose()?
+        .unwrap_or(0);
+
+    Ok(ObservedQuota {
+        windows,
+        reset_credits,
+        stale: false,
+    })
+}
+
+pub fn stale_quota(last_known: Option<&ObservedQuota>) -> Result<ObservedQuota, DashboardError> {
+    let mut quota = last_known.cloned().ok_or(DashboardError::MissingQuota)?;
+    quota.stale = true;
+    Ok(quota)
+}
+
+fn normalize_observed_window(
+    window: AppServerQuotaWindow,
+) -> Result<ObservedQuotaWindow, DashboardError> {
+    if !(0..=100).contains(&window.used_percent) {
+        return Err(DashboardError::InvalidQuota(
+            "额度使用比例不在 0% 到 100% 之间".into(),
+        ));
+    }
+    let used_percent = u8::try_from(window.used_percent).unwrap();
+    if window.window_duration_mins <= 0 {
+        return Err(DashboardError::InvalidQuota(
+            "额度窗口时长必须大于零".into(),
+        ));
+    }
+    let name = if window.window_duration_mins % (24 * 60) == 0 {
+        format!("{} 天", window.window_duration_mins / (24 * 60))
+    } else if window.window_duration_mins % 60 == 0 {
+        format!("{} 小时", window.window_duration_mins / 60)
+    } else {
+        format!("{} 分钟", window.window_duration_mins)
+    };
+    Ok(ObservedQuotaWindow {
+        name,
+        used_percent,
+        resets_at_epoch_seconds: window.resets_at,
+    })
 }
 
 pub fn render_dashboard(
@@ -192,11 +325,20 @@ pub fn normalize_dashboard(
     tasks.truncate(3);
 
     NormalizedDashboardState {
-        quota: NormalizedQuotaWindow {
-            name: observed.quota.name,
-            used_percent: observed.quota.used_percent.min(100),
-            remaining_percent: 100_u8.saturating_sub(observed.quota.used_percent),
-            resets_at_epoch_seconds: observed.quota.resets_at_epoch_seconds,
+        quota: NormalizedQuota {
+            windows: observed
+                .quota
+                .windows
+                .into_iter()
+                .map(|window| NormalizedQuotaWindow {
+                    name: window.name,
+                    used_percent: window.used_percent.min(100),
+                    remaining_percent: 100_u8.saturating_sub(window.used_percent),
+                    resets_at_epoch_seconds: window.resets_at_epoch_seconds,
+                })
+                .collect(),
+            reset_credits: observed.quota.reset_credits,
+            stale: observed.quota.stale,
         },
         tasks: tasks
             .into_iter()
@@ -244,44 +386,55 @@ fn draw_dashboard(
     let number_font = FontRenderer::new::<u8g2_font_logisoso24_tn>();
     let mut visible = Vec::new();
 
-    let quota_heading = format!("配额 | {}", state.quota.name);
-    draw_text(&text_font, quota_heading.as_str(), 14, 22, &mut display)?;
-    visible.push(quota_heading);
-
-    let remaining = state.quota.remaining_percent.to_string();
-    draw_text(&number_font, remaining.as_str(), 14, 58, &mut display)?;
-    draw_text(&text_font, "%", 62, 58, &mut display)?;
-    visible.push(format!("{remaining}%"));
-
-    let used = format!("剩余  已用 {}%", state.quota.used_percent);
-    draw_text(&text_font, used.as_str(), 92, 54, &mut display)?;
-    visible.push(used);
-
-    Rectangle::new(Point::new(92, 66), Size::new(288, 14))
-        .draw_styled(
-            &PrimitiveStyle::with_stroke(BinaryColor::On, 1),
+    match state.quota.windows.as_slice() {
+        [window] => draw_quota_window(
+            window,
+            14,
+            366,
+            now_epoch_seconds,
+            &text_font,
+            &number_font,
             &mut display,
-        )
-        .unwrap();
-    let used_width = 284 * u32::from(state.quota.used_percent) / 100;
-    if used_width > 0 {
-        Rectangle::new(Point::new(94, 68), Size::new(used_width, 10))
-            .draw_styled(&PrimitiveStyle::with_fill(BinaryColor::On), &mut display)
-            .unwrap();
+            &mut visible,
+        )?,
+        [first, second] => {
+            draw_quota_window(
+                first,
+                14,
+                172,
+                now_epoch_seconds,
+                &text_font,
+                &number_font,
+                &mut display,
+                &mut visible,
+            )?;
+            draw_quota_window(
+                second,
+                214,
+                172,
+                now_epoch_seconds,
+                &text_font,
+                &number_font,
+                &mut display,
+                &mut visible,
+            )?;
+        }
+        _ => {
+            return Err(DashboardError::InvalidQuota(
+                "额度窗口数量必须为一或二".into(),
+            ));
+        }
     }
 
-    let seconds_until_reset = state
-        .quota
-        .resets_at_epoch_seconds
-        .saturating_sub(now_epoch_seconds)
-        .max(0);
-    let reset = if seconds_until_reset >= 3_600 {
-        format!("重置 {} 小时", (seconds_until_reset + 3_599) / 3_600)
-    } else {
-        format!("重置 {} 分钟", (seconds_until_reset + 59) / 60)
-    };
-    draw_text(&text_font, reset.as_str(), 92, 96, &mut display)?;
-    visible.push(reset);
+    if state.quota.reset_credits > 0 {
+        let credits = format!("重置额度 {}", state.quota.reset_credits);
+        draw_text(&text_font, credits.as_str(), 286, 22, &mut display)?;
+        visible.push(credits);
+    }
+    if state.quota.stale {
+        draw_text(&text_font, "数据可能已过期", 286, 98, &mut display)?;
+        visible.push("数据可能已过期".into());
+    }
 
     Rectangle::new(Point::new(0, 103), Size::new(DISPLAY_WIDTH, 2))
         .draw_styled(&PrimitiveStyle::with_fill(BinaryColor::On), &mut display)
@@ -311,6 +464,55 @@ fn draw_dashboard(
     }
 
     Ok((display.pixels, visible))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_quota_window(
+    window: &NormalizedQuotaWindow,
+    x: i32,
+    width: u32,
+    now_epoch_seconds: i64,
+    text_font: &FontRenderer,
+    number_font: &FontRenderer,
+    display: &mut FrameDisplay,
+    visible: &mut Vec<String>,
+) -> Result<(), DashboardError> {
+    draw_text(text_font, window.name.as_str(), x, 22, display)?;
+    visible.push(window.name.clone());
+
+    let remaining = window.remaining_percent.to_string();
+    draw_text(number_font, remaining.as_str(), x, 58, display)?;
+    draw_text(text_font, "%", x + 50, 58, display)?;
+    visible.push(format!("{remaining}%"));
+
+    let used = format!("已用 {}%", window.used_percent);
+    draw_text(text_font, used.as_str(), x + 78, 54, display)?;
+    visible.push(used);
+
+    Rectangle::new(Point::new(x, 66), Size::new(width, 12))
+        .draw_styled(&PrimitiveStyle::with_stroke(BinaryColor::On, 1), display)
+        .unwrap();
+    let used_width = width.saturating_sub(4) * u32::from(window.used_percent) / 100;
+    if used_width > 0 {
+        Rectangle::new(Point::new(x + 2, 68), Size::new(used_width, 8))
+            .draw_styled(&PrimitiveStyle::with_fill(BinaryColor::On), display)
+            .unwrap();
+    }
+
+    let seconds = window
+        .resets_at_epoch_seconds
+        .saturating_sub(now_epoch_seconds)
+        .max(0);
+    let reset = if seconds >= 86_400 {
+        format!("重置 {} 天", (seconds + 86_399) / 86_400)
+    } else if seconds >= 3_600 {
+        format!("重置 {} 小时", (seconds + 3_599) / 3_600)
+    } else {
+        format!("重置 {} 分钟", (seconds + 59) / 60)
+    };
+    draw_text(text_font, reset.as_str(), x, 96, display)?;
+    visible.push(reset);
+    Ok(())
 }
 
 fn draw_text<F: u8g2_fonts::Content>(

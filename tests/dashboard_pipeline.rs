@@ -1,14 +1,19 @@
 use codex_zectrix_dashboard::{
-    ActivityState, DashboardConfig, ObservedDashboardState, ObservedQuotaWindow, ObservedTask,
-    PublishDecision, normalize_dashboard, render_dashboard, render_normalized_dashboard,
+    ActivityState, DashboardConfig, ObservedDashboardState, ObservedQuota, ObservedQuotaWindow,
+    ObservedTask, PublishDecision, QuotaCache, normalize_dashboard, parse_app_server_quota,
+    render_dashboard, render_normalized_dashboard,
 };
 
 fn sample_state() -> ObservedDashboardState {
     ObservedDashboardState {
-        quota: ObservedQuotaWindow {
-            name: "5 小时".into(),
-            used_percent: 37,
-            resets_at_epoch_seconds: 1_786_337_200,
+        quota: ObservedQuota {
+            windows: vec![ObservedQuotaWindow {
+                name: "5 小时".into(),
+                used_percent: 37,
+                resets_at_epoch_seconds: 1_786_337_200,
+            }],
+            reset_credits: 0,
+            stale: false,
         },
         tasks: vec![
             ObservedTask::new("生成本地看板", ActivityState::Running, 1_786_330_000),
@@ -22,6 +27,20 @@ fn sample_state() -> ObservedDashboardState {
         tool: Some("SECRET_TOOL_MARKER".into()),
         error_text: Some("SECRET_ERROR_MARKER".into()),
         plan: Some("SECRET_PLAN_MARKER".into()),
+    }
+}
+
+fn state_with_quota(quota: ObservedQuota) -> ObservedDashboardState {
+    ObservedDashboardState {
+        quota,
+        tasks: sample_state().tasks,
+        prompt: None,
+        response: None,
+        reasoning: None,
+        project_path: None,
+        tool: None,
+        error_text: None,
+        plan: None,
     }
 }
 
@@ -50,7 +69,7 @@ fn sample_state_has_a_stable_hash_and_suppresses_an_identical_frame() {
         render_dashboard(sample_state(), 1_786_330_000, DashboardConfig::default()).unwrap();
     assert_eq!(
         first.frame.sha256,
-        "8a41309581b627c8c2a0f1fb4c9ecc1cf203b1cc2c9b66da54629ad6586772fd"
+        "a48103eb1d9127396570cf078684b02ed40259e2c265dadda501bcb95744feae"
     );
 
     let second = render_dashboard(
@@ -175,4 +194,104 @@ fn normalization_expires_old_ended_activity_and_reports_hidden_eligible_tasks() 
     let rendered =
         render_normalized_dashboard(normalized, 1_786_330_000, DashboardConfig::default()).unwrap();
     assert!(rendered.visible_text.iter().any(|text| text == "另有 1 项"));
+}
+
+#[test]
+fn one_window_fixture_uses_the_full_quota_area_and_omits_zero_reset_credits() {
+    let quota = parse_app_server_quota(include_str!("../fixtures/quota-one-window.json")).unwrap();
+    let sanitized = serde_json::to_string(&quota).unwrap();
+    assert!(!sanitized.contains("SECRET_ACCOUNT_MARKER"));
+    assert!(!sanitized.contains("SECRET_TOKEN_MARKER"));
+    let output = render_dashboard(
+        state_with_quota(quota),
+        1_786_330_000,
+        DashboardConfig::default(),
+    )
+    .unwrap();
+
+    assert_eq!(output.normalized.quota.windows.len(), 1);
+    assert!(output.visible_text.iter().any(|text| text == "63%"));
+    assert!(output.visible_text.iter().any(|text| text == "已用 37%"));
+    assert!(output.visible_text.iter().any(|text| text == "重置 2 小时"));
+    assert!(
+        !output
+            .visible_text
+            .iter()
+            .any(|text| text.contains("重置额度"))
+    );
+}
+
+#[test]
+fn two_window_fixture_renders_both_windows_and_positive_reset_credits() {
+    let quota = parse_app_server_quota(include_str!("../fixtures/quota-two-windows.json")).unwrap();
+    let output = render_dashboard(
+        state_with_quota(quota),
+        1_786_330_000,
+        DashboardConfig::default(),
+    )
+    .unwrap();
+
+    assert_eq!(output.normalized.quota.windows.len(), 2);
+    for expected in ["5 小时", "7 天", "63%", "79%", "重置额度 2"] {
+        assert!(
+            output.visible_text.iter().any(|text| text == expected),
+            "missing {expected}"
+        );
+    }
+
+    let one_window = render_dashboard(
+        state_with_quota(
+            parse_app_server_quota(include_str!("../fixtures/quota-one-window.json")).unwrap(),
+        ),
+        1_786_330_000,
+        DashboardConfig::default(),
+    )
+    .unwrap();
+    let center_of_bar = 66 * 400 + 200;
+    assert_eq!(one_window.frame.pixels[center_of_bar], 0);
+    assert_eq!(output.frame.pixels[center_of_bar], 255);
+}
+
+#[test]
+fn malformed_or_unknown_quota_preserves_the_last_known_values_and_marks_them_stale() {
+    let mut cache = QuotaCache::default();
+    let current = cache
+        .update(parse_app_server_quota(include_str!(
+            "../fixtures/quota-one-window.json"
+        )))
+        .unwrap();
+    assert!(!current.stale);
+    let stale = cache
+        .update(parse_app_server_quota(include_str!(
+            "../fixtures/quota-unknown-schema.json"
+        )))
+        .unwrap();
+    let output = render_dashboard(
+        state_with_quota(stale),
+        1_786_330_000,
+        DashboardConfig::default(),
+    )
+    .unwrap();
+
+    assert_eq!(output.normalized.quota.windows[0].used_percent, 37);
+    assert!(output.normalized.quota.stale);
+    assert!(
+        output
+            .visible_text
+            .iter()
+            .any(|text| text == "数据可能已过期")
+    );
+    assert!(
+        QuotaCache::default()
+            .update(parse_app_server_quota(include_str!(
+                "../fixtures/quota-unknown-schema.json"
+            )))
+            .is_err()
+    );
+    assert!(
+        parse_app_server_quota(
+            r#"{"rateLimits":{"primary":{"usedPercent":-1,"windowDurationMins":300,"resetsAt":1786337200}}}"#
+        )
+        .is_err()
+    );
 }
