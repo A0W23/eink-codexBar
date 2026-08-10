@@ -7,11 +7,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn dashboard_binary() -> std::path::PathBuf {
-    std::env::var_os("CODEX_ZECTRIX_TEST_BINARY")
-        .map(Into::into)
-        .unwrap_or_else(|| env!("CARGO_BIN_EXE_codex-zectrix-dashboard").into())
-}
+mod common;
 
 #[derive(Debug)]
 struct Request {
@@ -34,7 +30,7 @@ fn setup_discovers_a_note4_previews_then_uploads_only_after_confirmation() {
     let codex = fake_codex_command(temp.path());
     let keychain_state = temp.path().join("keychain-state");
 
-    let mut child = Command::new(dashboard_binary())
+    let mut child = Command::new(common::dashboard_binary())
         .arg("setup")
         .env("CODEX_ZECTRIX_API_BASE", base_url)
         .env("CODEX_ZECTRIX_DATA_DIR", temp.path().join("data"))
@@ -283,7 +279,7 @@ fn run_setup(
 ) -> std::process::Output {
     let security = fake_security_command(temp);
     let codex = fake_codex_command(temp);
-    let mut child = Command::new(dashboard_binary())
+    let mut child = Command::new(common::dashboard_binary())
         .arg("setup")
         .env("CODEX_ZECTRIX_API_BASE", base_url)
         .env("CODEX_ZECTRIX_DATA_DIR", temp.join("data"))

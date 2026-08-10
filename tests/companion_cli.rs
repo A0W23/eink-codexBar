@@ -6,11 +6,7 @@ use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
 
-fn dashboard_binary() -> std::path::PathBuf {
-    std::env::var_os("CODEX_ZECTRIX_TEST_BINARY")
-        .map(Into::into)
-        .unwrap_or_else(|| env!("CARGO_BIN_EXE_codex-zectrix-dashboard").into())
-}
+mod common;
 
 #[test]
 fn companion_combines_cached_activity_with_live_quota_and_publishes_content_free() {
@@ -34,7 +30,7 @@ fn companion_combines_cached_activity_with_live_quota_and_publishes_content_free
     let codex_log = temp.path().join("codex.log");
     let codex = fake_codex_command(temp.path());
     let security = fake_security_command(temp.path());
-    let output = Command::new(dashboard_binary())
+    let output = Command::new(common::dashboard_binary())
         .arg("companion")
         .env("CODEX_ZECTRIX_API_BASE", base_url)
         .env("CODEX_ZECTRIX_DATA_DIR", &data_dir)

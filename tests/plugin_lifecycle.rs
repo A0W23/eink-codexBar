@@ -6,11 +6,7 @@ use std::process::{Command, Stdio};
 use codex_zectrix_dashboard::{HookMetadata, find_codex_owner_pid, reviewed_plugin_hooks};
 use sha2::{Digest, Sha256};
 
-fn dashboard_binary() -> std::path::PathBuf {
-    std::env::var_os("CODEX_ZECTRIX_TEST_BINARY")
-        .map(Into::into)
-        .unwrap_or_else(|| env!("CARGO_BIN_EXE_codex-zectrix-dashboard").into())
-}
+mod common;
 
 fn hook(event: &str, plugin_id: Option<&str>, hash: &str) -> HookMetadata {
     HookMetadata {
@@ -203,7 +199,7 @@ fn hook_delivery_failure_never_blocks_the_codex_operation() {
     let temp = tempfile::tempdir().unwrap();
     let unavailable_data_dir = temp.path().join("not-a-directory");
     fs::write(&unavailable_data_dir, b"occupied").unwrap();
-    let mut hook = Command::new(dashboard_binary())
+    let mut hook = Command::new(common::dashboard_binary())
         .arg("hook-record")
         .env("CODEX_ZECTRIX_DATA_DIR", unavailable_data_dir)
         .stdin(Stdio::piped())
@@ -328,7 +324,7 @@ fn interrupted_update_resumes_from_finalization_without_losing_the_tombstone() {
             .contains("lifecycle_phase=finalizing_update")
     );
 
-    fs::copy(dashboard_binary(), fixture.new_binary()).unwrap();
+    fs::copy(common::dashboard_binary(), fixture.new_binary()).unwrap();
     assert!(fixture.run(&["lifecycle", "resume"]).status.success());
     assert!(!fixture.old_binary().exists());
 }
@@ -455,12 +451,12 @@ impl LifecycleFixture {
         fs::create_dir_all(old_root.join("bin")).unwrap();
         fs::create_dir_all(new_root.join("bin")).unwrap();
         fs::copy(
-            dashboard_binary(),
+            common::dashboard_binary(),
             old_root.join("bin/codex-zectrix-dashboard"),
         )
         .unwrap();
         fs::copy(
-            dashboard_binary(),
+            common::dashboard_binary(),
             new_root.join("bin/codex-zectrix-dashboard"),
         )
         .unwrap();
@@ -581,7 +577,7 @@ printf '],"warnings":[],"errors":[]}}]}}}}\n'
     }
 
     fn run(&self, args: &[&str]) -> std::process::Output {
-        Command::new(dashboard_binary())
+        Command::new(common::dashboard_binary())
             .args(args)
             .env("CODEX_ZECTRIX_DATA_DIR", &self.data_dir)
             .env("CODEX_ZECTRIX_CODEX_BIN", &self.codex)
