@@ -40,7 +40,7 @@ fn live_preview_reads_the_official_app_server_quota_and_writes_a_frame() {
         &server,
         r#"#!/bin/sh
 read -r initialize
-printf '%s\n' '{"id":1,"result":{"userAgent":"fake","platformFamily":"unix","platformOs":"macos","codexHome":"/tmp/codex"}}'
+printf '%s\n' '{"id":1,"result":{"userAgent":"codex-zectrix-dashboard/0.146.1 (test)","platformFamily":"unix","platformOs":"macos","codexHome":"/tmp/codex"}}'
 read -r initialized
 read -r quota
 printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":37,"windowDurationMins":300,"resetsAt":1786337200},"secondary":null},"rateLimitResetCredits":{"availableCount":0}}}'

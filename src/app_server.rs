@@ -15,6 +15,8 @@ use crate::{
     parse_app_server_quota,
 };
 
+const SUPPORTED_APP_SERVER_VERSIONS: [&str; 2] = ["0.146.1", "0.147.0-alpha.6.5"];
+
 #[derive(Clone, Debug)]
 pub struct AppServerClient {
     program: PathBuf,
@@ -167,7 +169,8 @@ impl AppServerClient {
                     }
                 }),
             )?;
-            read_result(&receiver, 1)?;
+            let initialized = read_result(&receiver, 1)?;
+            validate_app_server_version(&initialized)?;
 
             write_message(&mut stdin, &json!({ "method": "initialized" }))?;
             write_message(&mut stdin, &request)?;
@@ -180,6 +183,19 @@ impl AppServerClient {
         let _ = reader.join();
         result
     }
+}
+
+fn validate_app_server_version(initialized: &Value) -> Result<(), AppServerError> {
+    let version = initialized
+        .get("userAgent")
+        .and_then(Value::as_str)
+        .and_then(|user_agent| user_agent.split_once('/').map(|(_, suffix)| suffix))
+        .and_then(|suffix| suffix.split_whitespace().next())
+        .ok_or(AppServerError::UnsupportedVersion)?;
+    SUPPORTED_APP_SERVER_VERSIONS
+        .contains(&version)
+        .then_some(())
+        .ok_or(AppServerError::UnsupportedVersion)
 }
 
 impl Default for AppServerClient {
@@ -259,6 +275,8 @@ pub enum AppServerError {
     Rpc,
     #[error("Codex app-server 响应缺少结果")]
     MissingResult,
+    #[error("Codex app-server 版本不受支持")]
+    UnsupportedVersion,
     #[error(transparent)]
     Quota(#[from] DashboardError),
     #[error(transparent)]

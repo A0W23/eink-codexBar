@@ -6,11 +6,18 @@ use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
 
+fn dashboard_binary() -> std::path::PathBuf {
+    std::env::var_os("CODEX_ZECTRIX_TEST_BINARY")
+        .map(Into::into)
+        .unwrap_or_else(|| env!("CARGO_BIN_EXE_codex-zectrix-dashboard").into())
+}
+
 #[test]
 fn companion_combines_cached_activity_with_live_quota_and_publishes_content_free() {
     let temp = tempfile::tempdir().unwrap();
     let data_dir = temp.path().join("data");
     fs::create_dir_all(&data_dir).unwrap();
+    fs::create_dir(data_dir.join("quota.json")).unwrap();
     fs::write(
         data_dir.join("settings.json"),
         r#"{"deviceId":"SECRET_DEVICE_ID","pageId":3,"privacyMode":false}"#,
@@ -27,7 +34,7 @@ fn companion_combines_cached_activity_with_live_quota_and_publishes_content_free
     let codex_log = temp.path().join("codex.log");
     let codex = fake_codex_command(temp.path());
     let security = fake_security_command(temp.path());
-    let output = Command::new(env!("CARGO_BIN_EXE_codex-zectrix-dashboard"))
+    let output = Command::new(dashboard_binary())
         .arg("companion")
         .env("CODEX_ZECTRIX_API_BASE", base_url)
         .env("CODEX_ZECTRIX_DATA_DIR", &data_dir)
@@ -51,12 +58,14 @@ fn companion_combines_cached_activity_with_live_quota_and_publishes_content_free
             .contains("content-type: multipart/form-data; boundary=")
     );
     let png = extract_png(&request.1);
+    assert!(!contains(&request.1, secret.as_bytes()));
+    assert!(!request.0.lines().next().unwrap().contains(secret));
     let image = image::load_from_memory(png).unwrap().to_luma8();
     assert_eq!(image.dimensions(), (400, 300));
     assert!(data_dir.join("publisher-state.json").is_file());
     let source_status: serde_json::Value =
         serde_json::from_slice(&fs::read(data_dir.join("source-status.json")).unwrap()).unwrap();
-    assert_eq!(source_status["quota"], "current");
+    assert_eq!(source_status["quota"], "stale");
     assert_eq!(source_status["taskActivity"], "stale");
 
     let codex_requests = fs::read_to_string(codex_log).unwrap();
@@ -89,7 +98,7 @@ fn fake_codex_command(temp: &std::path::Path) -> std::path::PathBuf {
         r#"#!/bin/sh
 read -r initialize
 printf '%s\n' "$initialize" >> "$TEST_CODEX_LOG"
-printf '%s\n' '{"id":1,"result":{"userAgent":"fake","platformFamily":"unix","platformOs":"macos","codexHome":"/tmp/codex"}}'
+printf '%s\n' '{"id":1,"result":{"userAgent":"codex-zectrix-dashboard/0.146.1 (test)","platformFamily":"unix","platformOs":"macos","codexHome":"/tmp/codex"}}'
 read -r initialized
 printf '%s\n' "$initialized" >> "$TEST_CODEX_LOG"
 read -r request

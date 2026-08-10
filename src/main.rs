@@ -371,6 +371,7 @@ fn run_companion() -> Result<(), Box<dyn std::error::Error>> {
                 let mut quota = quota_cache.update::<std::convert::Infallible>(Ok(quota))?;
                 if write_json_atomically(&quota_cache_path, &quota).is_err() {
                     quota.stale = true;
+                    source_status.quota = QuotaSourceStatus::Stale;
                     eprintln!("state_persist_unavailable");
                 }
                 quota
@@ -402,6 +403,7 @@ fn run_companion() -> Result<(), Box<dyn std::error::Error>> {
                 };
                 if write_json_atomically(&activity_cache_path, &snapshot.tasks).is_err() {
                     snapshot.stale = true;
+                    source_status.task_activity = TaskActivitySourceStatus::Stale;
                     eprintln!("state_persist_unavailable");
                 }
                 snapshot

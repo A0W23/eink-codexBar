@@ -25,6 +25,8 @@ codex plugin add codex-zectrix-dashboard@codex-zectrix-dashboard
 
 安装后在 Codex 中使用 `$setup-zectrix-dashboard`。API Key 只通过本机无回显终端输入；setup 会先生成预览并披露上传边界，确认后才进行首次推送。
 
+更新前使用 `$setup-zectrix-dashboard` 的 guarded update 流程。该流程先刷新 Git marketplace snapshot，在旧 hook 可执行文件仍存在时停用 hooks 和 companion，要求 reload 或 restart，再通过 `lifecycle resume` 安装新版本；不要直接删除旧插件缓存。
+
 ## 发布验证
 
 ```sh

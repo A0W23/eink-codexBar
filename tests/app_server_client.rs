@@ -3,6 +3,8 @@ use std::os::unix::fs::PermissionsExt;
 
 use codex_zectrix_dashboard::{AppServerClient, CorrelationKey};
 
+const SUPPORTED_USER_AGENT: &str = "codex-zectrix-dashboard/0.146.1 (Mac OS 26.5; arm64) dumb";
+
 #[test]
 fn standalone_client_initializes_then_reads_quota_without_other_requests() {
     let temp = tempfile::tempdir().unwrap();
@@ -12,7 +14,7 @@ fn standalone_client_initializes_then_reads_quota_without_other_requests() {
         r#"#!/bin/sh
 read -r initialize
 printf '%s\n' "$initialize" >> '{}'
-printf '%s\n' '{{"id":1,"result":{{"userAgent":"fake","platformFamily":"unix","platformOs":"macos","codexHome":"/tmp/codex"}}}}'
+printf '%s\n' '{{"id":1,"result":{{"userAgent":"{SUPPORTED_USER_AGENT}","platformFamily":"unix","platformOs":"macos","codexHome":"/tmp/codex"}}}}'
 read -r initialized
 printf '%s\n' "$initialized" >> '{}'
 read -r quota
@@ -58,6 +60,30 @@ fn unavailable_app_server_returns_an_error_without_synthesizing_quota() {
 }
 
 #[test]
+fn unsupported_app_server_version_fails_closed_before_a_data_request() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = temp.path().join("fake-codex");
+    fs::write(
+        &server,
+        r#"#!/bin/sh
+read -r initialize
+printf '%s\n' '{"id":1,"result":{"userAgent":"codex-zectrix-dashboard/9.0.0 (future)"}}'
+read -r initialized
+read -r request
+[ -z "$request" ]
+"#,
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&server).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&server, permissions).unwrap();
+
+    let error = AppServerClient::new(&server).read_quota().unwrap_err();
+
+    assert!(error.to_string().contains("版本不受支持"));
+}
+
+#[test]
 fn rpc_error_details_are_not_exposed_by_the_client_error() {
     let temp = tempfile::tempdir().unwrap();
     let server = temp.path().join("fake-codex");
@@ -87,7 +113,7 @@ fn standalone_client_reads_official_titles_without_rollout_scan_or_repair() {
         r#"#!/bin/sh
 read -r initialize
 printf '%s\n' "$initialize" >> '{}'
-printf '%s\n' '{{"id":1,"result":{{"userAgent":"fake"}}}}'
+printf '%s\n' '{{"id":1,"result":{{"userAgent":"{SUPPORTED_USER_AGENT}"}}}}'
 read -r initialized
 printf '%s\n' "$initialized" >> '{}'
 read -r threads
@@ -143,7 +169,7 @@ fn standalone_client_follows_every_read_only_task_metadata_page() {
     let script = format!(
         r#"#!/bin/sh
 read -r initialize
-printf '%s\n' '{{"id":1,"result":{{"userAgent":"fake"}}}}'
+printf '%s\n' '{{"id":1,"result":{{"userAgent":"{SUPPORTED_USER_AGENT}"}}}}'
 read -r initialized
 read -r threads
 printf '%s\n' "$threads" >> '{}'

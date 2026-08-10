@@ -7,6 +7,12 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+fn dashboard_binary() -> std::path::PathBuf {
+    std::env::var_os("CODEX_ZECTRIX_TEST_BINARY")
+        .map(Into::into)
+        .unwrap_or_else(|| env!("CARGO_BIN_EXE_codex-zectrix-dashboard").into())
+}
+
 #[derive(Debug)]
 struct Request {
     head: String,
@@ -28,7 +34,7 @@ fn setup_discovers_a_note4_previews_then_uploads_only_after_confirmation() {
     let codex = fake_codex_command(temp.path());
     let keychain_state = temp.path().join("keychain-state");
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_codex-zectrix-dashboard"))
+    let mut child = Command::new(dashboard_binary())
         .arg("setup")
         .env("CODEX_ZECTRIX_API_BASE", base_url)
         .env("CODEX_ZECTRIX_DATA_DIR", temp.path().join("data"))
@@ -87,6 +93,8 @@ fn setup_discovers_a_note4_previews_then_uploads_only_after_confirmation() {
     assert!(contains(&upload.body, b"\r\n\r\nfalse\r\n"));
     assert!(contains(&upload.body, b"name=\"pageId\""));
     assert!(contains(&upload.body, b"\r\n\r\n3\r\n"));
+    assert!(!contains(&upload.body, secret.as_bytes()));
+    assert!(!upload.head.lines().next().unwrap().contains(&secret));
     let png = extract_png(&upload.body);
     assert!(png.len() <= 2 * 1024 * 1024);
     let image = image::load_from_memory(png).unwrap().to_luma8();
@@ -275,7 +283,7 @@ fn run_setup(
 ) -> std::process::Output {
     let security = fake_security_command(temp);
     let codex = fake_codex_command(temp);
-    let mut child = Command::new(env!("CARGO_BIN_EXE_codex-zectrix-dashboard"))
+    let mut child = Command::new(dashboard_binary())
         .arg("setup")
         .env("CODEX_ZECTRIX_API_BASE", base_url)
         .env("CODEX_ZECTRIX_DATA_DIR", temp.join("data"))
@@ -303,7 +311,7 @@ fn fake_codex_command(temp: &std::path::Path) -> std::path::PathBuf {
         &path,
         r#"#!/bin/sh
 read -r initialize
-printf '%s\n' '{"id":1,"result":{"userAgent":"fake","platformFamily":"unix","platformOs":"macos","codexHome":"/tmp/codex"}}'
+printf '%s\n' '{"id":1,"result":{"userAgent":"codex-zectrix-dashboard/0.146.1 (test)","platformFamily":"unix","platformOs":"macos","codexHome":"/tmp/codex"}}'
 read -r initialized
 read -r quota
 printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":37,"windowDurationMins":300,"resetsAt":1786337200},"secondary":null},"rateLimitResetCredits":{"availableCount":0}}}'
