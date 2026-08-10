@@ -95,8 +95,29 @@ fn renders_a_400_by_300_monochrome_frame_and_requests_first_publish() {
     );
     assert_eq!(output.frame.pixels[0], 0);
     assert_eq!(output.frame.pixels[133 * 400], 255);
-    assert!(output.visible_text.iter().any(|text| text == "重置 2 小时"));
+    assert!(
+        output
+            .visible_text
+            .iter()
+            .any(|text| text == "重置 2小时 0分")
+    );
     assert_eq!(output.publish_decision, PublishDecision::Publish);
+}
+
+#[test]
+fn quota_reset_time_keeps_days_hours_and_minutes() {
+    let now = 1_786_330_000;
+    let mut state = sample_state();
+    state.quota.windows[0].resets_at_epoch_seconds = now + 443_880;
+
+    let output = render_dashboard(state, now, DashboardConfig::default()).unwrap();
+
+    assert!(
+        output
+            .visible_text
+            .iter()
+            .any(|text| text == "重置 5天 3小时 18分")
+    );
 }
 
 #[test]
@@ -121,12 +142,21 @@ fn rendered_page_shows_the_successful_sync_time_without_a_ticking_clock() {
 }
 
 #[test]
+fn task_list_uses_the_section_without_a_heading_or_empty_footer_rule() {
+    let output =
+        render_dashboard(sample_state(), 1_786_330_000, DashboardConfig::default()).unwrap();
+
+    assert!(!output.visible_text.iter().any(|text| text == "任务动态"));
+    assert!((14..386).all(|x| output.frame.pixels[272 * 400 + x] == 255));
+}
+
+#[test]
 fn sample_state_has_a_stable_hash_and_suppresses_an_identical_frame() {
     let first =
         render_dashboard(sample_state(), 1_786_330_000, DashboardConfig::default()).unwrap();
     assert_eq!(
         first.frame.sha256,
-        "672ceb2e446cdd6986d529d71e7b0560c7e44ad4a7a69075130a4cdea9eb2b43"
+        "049655963fe3b8bd7d842ac418aa801b6769c6d8033b71c0ec41a12498ad5ff5"
     );
 
     let second = render_dashboard(
@@ -337,7 +367,12 @@ fn one_window_fixture_uses_the_full_quota_area_and_omits_zero_reset_credits() {
     assert_eq!(output.normalized.quota.windows.len(), 1);
     assert!(output.visible_text.iter().any(|text| text == "63%"));
     assert!(output.visible_text.iter().any(|text| text == "已用 37%"));
-    assert!(output.visible_text.iter().any(|text| text == "重置 2 小时"));
+    assert!(
+        output
+            .visible_text
+            .iter()
+            .any(|text| text == "重置 2小时 0分")
+    );
     assert!(
         output
             .visible_text

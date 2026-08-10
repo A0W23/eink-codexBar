@@ -130,7 +130,6 @@ struct ApiCodeResponse {
 
 struct PendingDashboard {
     normalized: NormalizedDashboardState,
-    visible_state_hash: String,
 }
 
 pub struct PublishCoordinator {
@@ -169,13 +168,9 @@ impl PublishCoordinator {
         self.latest_observed = Some(normalized.clone());
         self.latest_visible_hash = Some(current_visible_hash.clone());
         if changed {
-            self.pending = Some(PendingDashboard {
-                normalized,
-                visible_state_hash: current_visible_hash,
-            });
+            self.pending = Some(PendingDashboard { normalized });
         } else if let Some(pending) = self.pending.as_mut() {
             pending.normalized = normalized;
-            pending.visible_state_hash = current_visible_hash;
         }
         changed
     }
@@ -226,9 +221,11 @@ impl PublishCoordinator {
             },
             Some(now_epoch_seconds),
         )?;
+        let published_visible_hash = visible_state_hash(&pending.normalized, now_epoch_seconds);
         if self.state.last_frame_hash.as_deref() == Some(&dashboard.frame.sha256) {
-            self.state.last_visible_state_hash = Some(pending.visible_state_hash.clone());
+            self.state.last_visible_state_hash = Some(published_visible_hash.clone());
             self.state.last_reset_at_epoch_seconds = reset_timestamps(&pending.normalized);
+            self.latest_visible_hash = Some(published_visible_hash);
             self.pending = None;
             return Ok(PublishAttempt::Unchanged);
         }
@@ -246,8 +243,9 @@ impl PublishCoordinator {
         self.state.last_successful_sync_epoch_seconds = Some(now_epoch_seconds);
         self.state.next_allowed_push_epoch_seconds = None;
         self.state.last_frame_hash = Some(dashboard.frame.sha256);
-        self.state.last_visible_state_hash = Some(pending.visible_state_hash.clone());
+        self.state.last_visible_state_hash = Some(published_visible_hash.clone());
         self.state.last_reset_at_epoch_seconds = reset_timestamps(&pending.normalized);
+        self.latest_visible_hash = Some(published_visible_hash);
         self.pending = None;
         Ok(PublishAttempt::Published)
     }
@@ -263,7 +261,7 @@ impl PublishCoordinator {
 
 fn visible_state_hash(state: &NormalizedDashboardState, now_epoch_seconds: i64) -> String {
     let mut digest = Sha256::new();
-    digest.update(b"codex-zectrix-visible-state-v3\0");
+    digest.update(b"codex-zectrix-visible-state-v4\0");
     digest.update(crate::current_date_label(now_epoch_seconds).as_bytes());
     for window in &state.quota.windows {
         digest.update(window.name.as_bytes());

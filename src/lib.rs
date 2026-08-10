@@ -20,7 +20,7 @@ use thiserror::Error;
 use u8g2_fonts::FontRenderer;
 use u8g2_fonts::fonts::{
     u8g2_font_logisoso30_tn, u8g2_font_logisoso42_tn, u8g2_font_wqy13_t_gb2312,
-    u8g2_font_wqy15_t_gb2312, u8g2_font_wqy16_t_gb2312,
+    u8g2_font_wqy14_t_gb2312, u8g2_font_wqy15_t_gb2312, u8g2_font_wqy16_t_gb2312,
 };
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
@@ -589,8 +589,9 @@ fn draw_dashboard(
 ) -> Result<(Vec<u8>, Vec<String>), DashboardError> {
     let mut display = FrameDisplay::new();
     let text_font = FontRenderer::new::<u8g2_font_wqy13_t_gb2312>();
+    let task_status_font = FontRenderer::new::<u8g2_font_wqy14_t_gb2312>();
     let body_font = FontRenderer::new::<u8g2_font_wqy15_t_gb2312>();
-    let section_font = FontRenderer::new::<u8g2_font_wqy16_t_gb2312>();
+    let task_title_font = FontRenderer::new::<u8g2_font_wqy16_t_gb2312>();
     let hero_number_font = FontRenderer::new::<u8g2_font_logisoso42_tn>();
     let compact_number_font = FontRenderer::new::<u8g2_font_logisoso30_tn>();
     let mut visible = Vec::new();
@@ -695,14 +696,12 @@ fn draw_dashboard(
     )?;
     visible.push(quota_message.into());
 
-    draw_text(&section_font, "任务动态", 14, 159, &mut display)?;
-    visible.push("任务动态".into());
     if state.task_activity_stale {
         draw_text_aligned(
             &text_font,
             "任务数据可能已过期",
             386,
-            158,
+            148,
             HorizontalAlignment::Right,
             BinaryColor::On,
             &mut display,
@@ -710,20 +709,23 @@ fn draw_dashboard(
         visible.push("任务数据可能已过期".into());
     }
 
+    let task_start_y = if state.task_activity_stale { 171 } else { 163 };
     for (index, task) in state.tasks.iter().enumerate() {
-        let y = 187 + index as i32 * 31;
+        let y = task_start_y + index as i32 * 38;
         let label = task.state.label();
-        draw_text(&text_font, label, 14, y, &mut display)?;
+        draw_text(&task_status_font, label, 14, y, &mut display)?;
         visible.push(label.into());
         let title = task.title.as_deref().unwrap_or("隐私任务");
-        let fitted_title = fit_text(&body_font, title, 294);
-        draw_text(&body_font, fitted_title.as_str(), 92, y, &mut display)?;
+        let fitted_title = fit_text(&task_title_font, title, 294);
+        draw_text(&task_title_font, fitted_title.as_str(), 92, y, &mut display)?;
         visible.push(title.into());
     }
 
-    Rectangle::new(Point::new(14, 272), Size::new(372, 1))
-        .draw_styled(&PrimitiveStyle::with_fill(BinaryColor::On), &mut display)
-        .unwrap();
+    if state.hidden_task_count > 0 || last_successful_sync_epoch_seconds.is_some() {
+        Rectangle::new(Point::new(14, 272), Size::new(372, 1))
+            .draw_styled(&PrimitiveStyle::with_fill(BinaryColor::On), &mut display)
+            .unwrap();
+    }
 
     if state.hidden_task_count > 0 {
         let overflow = format!("另有 {} 项", state.hidden_task_count);
@@ -905,13 +907,19 @@ pub(crate) fn quota_reset_label(resets_at_epoch_seconds: i64, now_epoch_seconds:
     let seconds = resets_at_epoch_seconds
         .saturating_sub(now_epoch_seconds)
         .max(0);
-    if seconds >= 86_400 {
-        format!("重置 {} 天", (seconds + 86_399) / 86_400)
-    } else if seconds >= 3_600 {
-        format!("重置 {} 小时", (seconds + 3_599) / 3_600)
-    } else {
-        format!("重置 {} 分钟", (seconds + 59) / 60)
+    let total_minutes = (seconds + 59) / 60;
+    let days = total_minutes / 1_440;
+    let hours = total_minutes % 1_440 / 60;
+    let minutes = total_minutes % 60;
+    let mut parts = Vec::new();
+    if days > 0 {
+        parts.push(format!("{days}天"));
     }
+    if days > 0 || hours > 0 {
+        parts.push(format!("{hours}小时"));
+    }
+    parts.push(format!("{minutes}分"));
+    format!("重置 {}", parts.join(" "))
 }
 
 fn draw_text<F: u8g2_fonts::Content>(
