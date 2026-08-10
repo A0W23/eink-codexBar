@@ -15,7 +15,7 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-const NOTE4_BOARD: &str = "bread-compact-wifi";
+const NOTE4_BOARDS: [&str; 2] = ["zectrix-s3-epaper-4.2", "bread-compact-wifi"];
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -231,7 +231,7 @@ impl ZectrixClient {
         Ok(response
             .data
             .into_iter()
-            .filter(|device| device.board == NOTE4_BOARD)
+            .filter(|device| NOTE4_BOARDS.contains(&device.board.as_str()))
             .collect())
     }
 

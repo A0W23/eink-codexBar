@@ -16,7 +16,7 @@ struct Request {
 }
 
 #[test]
-fn setup_discovers_a_note4_previews_then_uploads_only_after_confirmation() {
+fn setup_discovers_a_current_note4_previews_then_uploads_only_after_confirmation() {
     let temp = tempfile::tempdir().unwrap();
     let secret = format!(
         "zt_runtime_{}",
@@ -356,7 +356,7 @@ fn fake_zectrix_service(
             let (status, body) = if index == 0 {
                 (
                     "200 OK",
-                    r#"{"code":0,"data":[{"deviceId":"11:22:33:44:55:66","alias":"Other display","board":"other-board"},{"deviceId":"AA:BB:CC:DD:EE:FF","alias":"Desk NOTE4","board":"bread-compact-wifi"}]}"#,
+                    r#"{"code":0,"data":[{"deviceId":"11:22:33:44:55:66","alias":"Other display","board":"other-board"},{"deviceId":"AA:BB:CC:DD:EE:FF","alias":"Desk NOTE4","board":"zectrix-s3-epaper-4.2"}]}"#,
                 )
             } else if upload_status == "200 OK" {
                 (

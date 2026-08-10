@@ -1,6 +1,6 @@
-# Codex Dashboard for ZECTRIX 0.1.0
+# Codex Dashboard for ZECTRIX 0.1.1
 
-First public release for macOS and ZECTRIX NOTE4. The plugin bundles a universal macOS companion and renders a 400x300 monochrome quota and task-activity dashboard.
+Adds support for the current NOTE4 board identifier `zectrix-s3-epaper-4.2`, while retaining compatibility with the legacy API identifier. Also accepts the current Codex hook schema when `executionMode` is omitted.
 
 MVP limitations:
 
