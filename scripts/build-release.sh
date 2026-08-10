@@ -8,8 +8,11 @@ stage=$(mktemp -d "${TMPDIR:-/tmp}/codex-zectrix-release.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
 
 cd "$repo_root"
-cargo build --locked --release --target aarch64-apple-darwin
-cargo build --locked --release --target x86_64-apple-darwin
+source_fingerprint=$(./scripts/source-fingerprint.sh)
+CODEX_ZECTRIX_SOURCE_FINGERPRINT=$source_fingerprint \
+  cargo build --locked --release --target aarch64-apple-darwin
+CODEX_ZECTRIX_SOURCE_FINGERPRINT=$source_fingerprint \
+  cargo build --locked --release --target x86_64-apple-darwin
 
 /usr/bin/lipo -create \
   target/aarch64-apple-darwin/release/codex-zectrix-dashboard \

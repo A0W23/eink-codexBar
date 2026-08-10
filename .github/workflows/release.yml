@@ -22,7 +22,6 @@ jobs:
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test --locked --all-features
       - run: ./scripts/build-release.sh
-      - run: git diff --exit-code -- plugin/bin/codex-zectrix-dashboard
       - run: ./scripts/test-clean-install.sh
       - uses: actions/upload-artifact@v4
         with:

@@ -42,6 +42,17 @@ fn public_release_is_an_installable_marketplace_with_a_universal_companion() {
         String::from_utf8(output.stdout).unwrap().trim(),
         env!("CARGO_PKG_VERSION")
     );
+
+    let expected_fingerprint = Command::new("./scripts/source-fingerprint.sh")
+        .output()
+        .unwrap();
+    assert!(expected_fingerprint.status.success());
+    let packaged_fingerprint = Command::new(binary)
+        .arg("build-fingerprint")
+        .output()
+        .unwrap();
+    assert!(packaged_fingerprint.status.success());
+    assert_eq!(packaged_fingerprint.stdout, expected_fingerprint.stdout);
 }
 
 #[test]

@@ -57,6 +57,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let command = args
         .next()
         .ok_or("用法：codex-zectrix-dashboard <preview|live-preview|setup|companion> ...")?;
+    if command == "build-fingerprint" {
+        if args.next().is_some() {
+            return Err("build-fingerprint 不接受命令行参数".into());
+        }
+        println!(
+            "{}",
+            option_env!("CODEX_ZECTRIX_SOURCE_FINGERPRINT").unwrap_or("development")
+        );
+        return Ok(());
+    }
     if command == "version" {
         if args.next().is_some() {
             return Err("version 不接受命令行参数".into());
