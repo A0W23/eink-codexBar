@@ -36,7 +36,7 @@ struct ThreadListResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ThreadMetadata {
-    id: String,
+    session_id: String,
     name: Option<String>,
     parent_thread_id: Option<String>,
     source: Value,
@@ -57,13 +57,11 @@ pub fn parse_app_server_tasks(
         .into_iter()
         .filter_map(|task| {
             let title = task.name.filter(|title| !title.trim().is_empty())?;
+            let correlation = CorrelationKey::derive(&task.session_id, installation_salt);
             Some(OfficialTaskMetadata {
-                correlation: CorrelationKey::derive(&task.id, installation_salt),
+                correlation: correlation.clone(),
                 title,
-                parent_correlation: task
-                    .parent_thread_id
-                    .as_deref()
-                    .map(|id| CorrelationKey::derive(id, installation_salt)),
+                parent_correlation: task.parent_thread_id.map(|_| correlation),
             })
         })
         .collect())
@@ -294,12 +292,12 @@ fn parse_rollout(
             if cli_version != supported_cli_version {
                 return Err(ActivitySourceError::UnsupportedVersion);
             }
-            let id = payload
-                .get("id")
+            let session_id = payload
+                .get("session_id")
                 .and_then(Value::as_str)
                 .filter(|id| !id.is_empty())
                 .ok_or(ActivitySourceError::UnsupportedRollout)?;
-            correlation = Some(CorrelationKey::derive(id, installation_salt));
+            correlation = Some(CorrelationKey::derive(session_id, installation_salt));
             continue;
         }
         if envelope_type != Some("event_msg") {

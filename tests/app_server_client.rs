@@ -92,7 +92,7 @@ read -r initialized
 printf '%s\n' "$initialized" >> '{}'
 read -r threads
 printf '%s\n' "$threads" >> '{}'
-printf '%s\n' '{{"id":2,"result":{{"data":[{{"id":"task-1","name":"官方任务标题","parentThreadId":null,"source":"appServer","preview":"SECRET_PROMPT","cwd":"SECRET_PATH"}}],"nextCursor":null}}}}'
+printf '%s\n' '{{"id":2,"result":{{"data":[{{"id":"different-thread-id","sessionId":"task-1","name":"官方任务标题","parentThreadId":null,"source":"appServer","preview":"SECRET_PROMPT","cwd":"SECRET_PATH"}}],"nextCursor":null}}}}'
 "#,
         requests.display(),
         requests.display(),

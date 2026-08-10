@@ -14,10 +14,10 @@ const SALT: &str = "test-installation";
 fn official_thread_metadata_keeps_only_named_top_level_task_identity() {
     let response = r#"{
       "data": [
-        {"id":"top-id","name":"主任务","parentThreadId":null,"source":"appServer","preview":"SECRET_PROMPT","cwd":"SECRET_PATH"},
-        {"id":"automation-id","name":"每日自动化","parentThreadId":null,"source":{"custom":"automation"},"preview":"SECRET_AUTOMATION_PROMPT"},
-        {"id":"child-id","name":"子代理","parentThreadId":"top-id","source":{"subAgent":"review"},"preview":"SECRET_CHILD_PROMPT"},
-        {"id":"unnamed-id","name":null,"parentThreadId":null,"source":"appServer","preview":"SECRET_UNNAMED_PROMPT"}
+        {"id":"top-id","sessionId":"session-tree-1","name":"主任务","parentThreadId":null,"source":"appServer","preview":"SECRET_PROMPT","cwd":"SECRET_PATH"},
+        {"id":"automation-id","sessionId":"automation-session","name":"每日自动化","parentThreadId":null,"source":{"custom":"automation"},"preview":"SECRET_AUTOMATION_PROMPT"},
+        {"id":"child-id","sessionId":"session-tree-1","name":"子代理","parentThreadId":"top-id","source":{"subAgent":"review"},"preview":"SECRET_CHILD_PROMPT"},
+        {"id":"unnamed-id","sessionId":"unnamed-session","name":null,"parentThreadId":null,"source":"appServer","preview":"SECRET_UNNAMED_PROMPT"}
       ],
       "nextCursor": null
     }"#;
@@ -46,8 +46,7 @@ fn official_thread_metadata_keeps_only_named_top_level_task_identity() {
 
 #[test]
 fn official_thread_metadata_fails_closed_for_an_unknown_source_enum() {
-    let response =
-        r#"{"data":[{"id":"task-1","name":"任务","parentThreadId":null,"source":"futureSource"}]}"#;
+    let response = r#"{"data":[{"id":"task-1","sessionId":"session-1","name":"任务","parentThreadId":null,"source":"futureSource"}]}"#;
 
     assert!(parse_app_server_tasks(response, SALT).is_err());
 }
@@ -148,7 +147,7 @@ fn rollout_observation_reads_minimal_lifecycle_envelopes_without_modifying_codex
     fs::write(
         &rollout,
         concat!(
-            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"task-1\",\"cli_version\":\"0.147.0-alpha.6.5\",\"cwd\":\"SECRET_PATH\"}}\n",
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"different-thread-id\",\"session_id\":\"task-1\",\"cli_version\":\"0.147.0-alpha.6.5\",\"cwd\":\"SECRET_PATH\"}}\n",
             "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"started_at\":1786329980,\"turn_id\":\"SECRET_TURN\"}}\n",
             "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"content\":\"SECRET_RESPONSE\"}}\n",
             "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"completed_at\":1786329990,\"last_agent_message\":\"SECRET_RESULT\"}}\n"
@@ -190,7 +189,7 @@ fn rollout_observation_fails_closed_for_version_schema_or_lifecycle_drift() {
     let rollout = sessions.join("rollout-sanitized.jsonl");
     fs::write(
         &rollout,
-        "{\"type\":\"session_meta\",\"payload\":{\"id\":\"task-1\",\"cli_version\":\"future\"}}\n",
+        "{\"type\":\"session_meta\",\"payload\":{\"id\":\"different-thread-id\",\"session_id\":\"task-1\",\"cli_version\":\"future\"}}\n",
     )
     .unwrap();
     let config = ReadonlyObservationConfig {
@@ -204,7 +203,7 @@ fn rollout_observation_fails_closed_for_version_schema_or_lifecycle_drift() {
     fs::write(
         &rollout,
         concat!(
-            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"task-1\",\"cli_version\":\"0.147.0-alpha.6.5\"}}\n",
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"different-thread-id\",\"session_id\":\"task-1\",\"cli_version\":\"0.147.0-alpha.6.5\"}}\n",
             "{\"type\":\"event_msg\",\"payload\":{\"type\":\"turn_finished_in_a_new_way\",\"completed_at\":1786329990}}\n"
         ),
     )
