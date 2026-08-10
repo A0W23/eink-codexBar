@@ -2,13 +2,13 @@ use std::env;
 use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use codex_zectrix_dashboard::{
     AppServerClient, DashboardConfig, ObservedDashboardState, ObservedQuota, ObservedTask,
-    QuotaCache, ReadonlyObservationConfig, ReadonlyRolloutObserver, TaskActivityCache,
-    TaskActivitySnapshot, parse_hook_event, persist_hook_event, read_hook_events,
-    reduce_task_activity, render_dashboard,
+    PublishAttempt, PublishCoordinator, PublisherState, QuotaCache, ReadonlyObservationConfig,
+    ReadonlyRolloutObserver, TaskActivityCache, TaskActivitySnapshot, ZectrixPublisher,
+    parse_hook_event, persist_hook_event, read_hook_events, reduce_task_activity, render_dashboard,
 };
 
 mod setup;
@@ -29,7 +29,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args().skip(1);
     let command = args
         .next()
-        .ok_or("用法：codex-zectrix-dashboard <preview|live-preview|setup> ...")?;
+        .ok_or("用法：codex-zectrix-dashboard <preview|live-preview|setup|companion> ...")?;
     if command == "setup" {
         if args.next().is_some() {
             return Err("setup 不接受命令行参数".into());
@@ -41,6 +41,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             return Err("hook-record 不接受命令行参数".into());
         }
         return record_hook();
+    }
+    if command == "companion" {
+        if args.next().is_some() {
+            return Err("companion 不接受命令行参数".into());
+        }
+        return run_companion();
     }
     if !matches!(command.as_str(), "preview" | "live-preview") {
         return Err("用法：codex-zectrix-dashboard <preview|live-preview|setup> ...".into());
@@ -161,6 +167,175 @@ fn record_hook() -> Result<(), Box<dyn std::error::Error>> {
     if let Ok(Some(event)) = parse_hook_event(&input, CORRELATION_SALT, now_epoch_seconds) {
         persist_hook_event(&data_dir()?.join("hook-events.jsonl"), &event)?;
     }
+    Ok(())
+}
+
+fn run_companion() -> Result<(), Box<dyn std::error::Error>> {
+    let data_dir = data_dir()?;
+    fs::create_dir_all(&data_dir)?;
+    let settings: setup::Settings =
+        serde_json::from_slice(&fs::read(data_dir.join("settings.json"))?)?;
+    let client = env::var_os("CODEX_ZECTRIX_CODEX_BIN")
+        .map(AppServerClient::new)
+        .unwrap_or_default();
+
+    let quota_cache_path = data_dir.join("quota.json");
+    let last_known_quota = fs::read(&quota_cache_path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<ObservedQuota>(&bytes).ok());
+    let mut quota_cache = QuotaCache::new(last_known_quota);
+    let activity_cache_path = data_dir.join("activity.json");
+    let last_known_tasks = fs::read(&activity_cache_path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Vec<ObservedTask>>(&bytes).ok());
+    let mut has_activity = last_known_tasks.is_some();
+    let mut activity_cache = TaskActivityCache::new(last_known_tasks);
+    let publisher_state_path = data_dir.join("publisher-state.json");
+    let publisher_state = fs::read(&publisher_state_path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<PublisherState>(&bytes).ok())
+        .unwrap_or_default();
+    let mut coordinator = PublishCoordinator::new(
+        DashboardConfig {
+            privacy_mode: settings.privacy_mode,
+            previous_frame_hash: None,
+        },
+        publisher_state,
+    );
+    let max_cycles = env::var("CODEX_ZECTRIX_MAX_CYCLES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok());
+    let poll_interval = env::var("CODEX_ZECTRIX_POLL_INTERVAL_MILLIS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(Duration::from_secs(2));
+    let base_url =
+        env::var("CODEX_ZECTRIX_API_BASE").unwrap_or_else(|_| "https://cloud.zectrix.com".into());
+
+    let mut cycles = 0;
+    loop {
+        let now_epoch_seconds = current_epoch_seconds()?;
+        let quota = match client.read_quota() {
+            Ok(quota) => {
+                let mut quota = quota_cache.update::<std::convert::Infallible>(Ok(quota))?;
+                if write_json_atomically(&quota_cache_path, &quota).is_err() {
+                    quota.stale = true;
+                    eprintln!("state_persist_unavailable");
+                }
+                quota
+            }
+            Err(error) => match quota_cache.update(Err(error)) {
+                Ok(quota) => quota,
+                Err(_) => {
+                    eprintln!("observation_unavailable");
+                    if finish_cycle(&mut cycles, max_cycles, poll_interval) {
+                        break;
+                    }
+                    continue;
+                }
+            },
+        };
+        let activity = match observe_activity(&client, &data_dir, now_epoch_seconds) {
+            Ok(snapshot) => {
+                has_activity = true;
+                let mut snapshot = activity_cache.update::<std::convert::Infallible>(Ok(snapshot));
+                if write_json_atomically(&activity_cache_path, &snapshot.tasks).is_err() {
+                    snapshot.stale = true;
+                    eprintln!("state_persist_unavailable");
+                }
+                snapshot
+            }
+            Err(error) if has_activity => activity_cache.update(Err(error)),
+            Err(_) => {
+                eprintln!("observation_unavailable");
+                if finish_cycle(&mut cycles, max_cycles, poll_interval) {
+                    break;
+                }
+                continue;
+            }
+        };
+        coordinator.observe(
+            ObservedDashboardState {
+                quota,
+                task_activity_stale: activity.stale,
+                tasks: activity.tasks,
+                prompt: None,
+                response: None,
+                reasoning: None,
+                project_path: None,
+                tool: None,
+                error_text: None,
+                plan: None,
+            },
+            now_epoch_seconds,
+        );
+
+        if coordinator.has_pending() {
+            let keychain = setup::Keychain::from_environment();
+            let attempt = keychain.find().ok().flatten().and_then(|api_key| {
+                ZectrixPublisher::new(&api_key, &base_url, &settings.device_id, settings.page_id)
+                    .ok()
+                    .and_then(|mut publisher| {
+                        coordinator
+                            .try_publish_with_reservation(
+                                now_epoch_seconds,
+                                &mut publisher,
+                                |state| write_json_atomically(&publisher_state_path, state).is_ok(),
+                            )
+                            .ok()
+                    })
+            });
+            match attempt {
+                Some(PublishAttempt::Published | PublishAttempt::Unchanged) => {
+                    if write_json_atomically(&publisher_state_path, coordinator.state()).is_err() {
+                        eprintln!("state_persist_unavailable");
+                    }
+                }
+                Some(PublishAttempt::Failed) => {
+                    if write_json_atomically(&publisher_state_path, coordinator.state()).is_err() {
+                        eprintln!("state_persist_unavailable");
+                    }
+                    eprintln!("publish_unavailable");
+                }
+                Some(PublishAttempt::ReservationFailed) => {
+                    eprintln!("state_persist_unavailable");
+                }
+                None => eprintln!("publish_unavailable"),
+                Some(PublishAttempt::Idle | PublishAttempt::Deferred { .. }) => {}
+            }
+        }
+
+        if finish_cycle(&mut cycles, max_cycles, poll_interval) {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn current_epoch_seconds() -> Result<i64, Box<dyn std::error::Error>> {
+    Ok(SystemTime::now()
+        .duration_since(UNIX_EPOCH)?
+        .as_secs()
+        .try_into()?)
+}
+
+fn finish_cycle(cycles: &mut usize, max_cycles: Option<usize>, poll_interval: Duration) -> bool {
+    *cycles += 1;
+    if max_cycles.is_some_and(|maximum| *cycles >= maximum) {
+        return true;
+    }
+    std::thread::sleep(poll_interval);
+    false
+}
+
+fn write_json_atomically(
+    path: &std::path::Path,
+    value: &impl serde::Serialize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = path.with_extension("json.tmp");
+    fs::write(&temporary, serde_json::to_vec(value)?)?;
+    fs::rename(temporary, path)?;
     Ok(())
 }
 

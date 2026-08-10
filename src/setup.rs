@@ -21,10 +21,10 @@ const NOTE4_BOARD: &str = "bread-compact-wifi";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Settings {
-    device_id: String,
-    page_id: u8,
-    privacy_mode: bool,
+pub(crate) struct Settings {
+    pub(crate) device_id: String,
+    pub(crate) page_id: u8,
+    pub(crate) privacy_mode: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -283,12 +283,12 @@ impl ZectrixClient {
     }
 }
 
-struct Keychain {
+pub(crate) struct Keychain {
     command: PathBuf,
 }
 
 impl Keychain {
-    fn from_environment() -> Self {
+    pub(crate) fn from_environment() -> Self {
         Self {
             command: env::var_os("CODEX_ZECTRIX_SECURITY_BIN")
                 .map(PathBuf::from)
@@ -296,7 +296,7 @@ impl Keychain {
         }
     }
 
-    fn find(&self) -> Result<Option<Zeroizing<String>>, Box<dyn std::error::Error>> {
+    pub(crate) fn find(&self) -> Result<Option<Zeroizing<String>>, Box<dyn std::error::Error>> {
         let output = Command::new(&self.command)
             .args([
                 "find-generic-password",

@@ -1,9 +1,11 @@
 mod activity_sources;
 mod app_server;
+mod publisher;
 
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::io::Cursor;
 use std::path::Path;
 
 use embedded_graphics::geometry::{OriginDimensions, Size};
@@ -24,6 +26,10 @@ pub use activity_sources::{
     read_hook_events,
 };
 pub use app_server::{AppServerClient, AppServerError};
+pub use publisher::{
+    FramePublisher, MIN_PUSH_INTERVAL_SECONDS, PublishAttempt, PublishCoordinator, PublisherState,
+    ZectrixPublishError, ZectrixPublisher,
+};
 
 pub const DISPLAY_WIDTH: u32 = 400;
 pub const DISPLAY_HEIGHT: u32 = 300;
@@ -345,10 +351,21 @@ pub struct MonochromeFrame {
 }
 
 impl MonochromeFrame {
-    pub fn write_png(&self, path: impl AsRef<Path>) -> Result<(), DashboardError> {
+    pub fn png_bytes(&self) -> Result<Vec<u8>, DashboardError> {
         let image = GrayImage::from_raw(self.width, self.height, self.pixels.clone())
             .ok_or(DashboardError::InvalidFrame)?;
-        image.save(path).map_err(DashboardError::Image)
+        let mut output = Cursor::new(Vec::new());
+        image::DynamicImage::ImageLuma8(image)
+            .write_to(&mut output, image::ImageFormat::Png)
+            .map_err(DashboardError::Image)?;
+        Ok(output.into_inner())
+    }
+
+    pub fn write_png(&self, path: impl AsRef<Path>) -> Result<(), DashboardError> {
+        std::fs::write(path, self.png_bytes()?)
+            .map_err(image::ImageError::IoError)
+            .map_err(DashboardError::Image)?;
+        Ok(())
     }
 }
 
@@ -519,7 +536,20 @@ pub fn render_normalized_dashboard(
     now_epoch_seconds: i64,
     config: DisplayConfig,
 ) -> Result<DashboardOutput, DashboardError> {
-    let (pixels, visible_text) = draw_dashboard(&normalized, now_epoch_seconds)?;
+    render_normalized_dashboard_with_sync(normalized, now_epoch_seconds, config, None)
+}
+
+pub fn render_normalized_dashboard_with_sync(
+    normalized: NormalizedDashboardState,
+    now_epoch_seconds: i64,
+    config: DisplayConfig,
+    last_successful_sync_epoch_seconds: Option<i64>,
+) -> Result<DashboardOutput, DashboardError> {
+    let (pixels, visible_text) = draw_dashboard(
+        &normalized,
+        now_epoch_seconds,
+        last_successful_sync_epoch_seconds,
+    )?;
     let sha256 = format!("{:x}", Sha256::digest(&pixels));
     let publish_decision = if config.previous_frame_hash.as_deref() == Some(&sha256) {
         PublishDecision::Unchanged
@@ -543,6 +573,7 @@ pub fn render_normalized_dashboard(
 fn draw_dashboard(
     state: &NormalizedDashboardState,
     now_epoch_seconds: i64,
+    last_successful_sync_epoch_seconds: Option<i64>,
 ) -> Result<(Vec<u8>, Vec<String>), DashboardError> {
     let mut display = FrameDisplay::new();
     let text_font = FontRenderer::new::<u8g2_font_wqy13_t_gb2312>();
@@ -630,6 +661,17 @@ fn draw_dashboard(
         visible.push(overflow);
     }
 
+    if let Some(timestamp) = last_successful_sync_epoch_seconds {
+        let seconds = timestamp.rem_euclid(24 * 60 * 60);
+        let sync = format!(
+            "上次同步 {:02}:{:02}Z",
+            seconds / 3_600,
+            seconds % 3_600 / 60
+        );
+        draw_text(&text_font, sync.as_str(), 304, 298, &mut display)?;
+        visible.push(sync);
+    }
+
     Ok((display.pixels, visible))
 }
 
@@ -666,20 +708,23 @@ fn draw_quota_window(
             .unwrap();
     }
 
-    let seconds = window
-        .resets_at_epoch_seconds
+    let reset = quota_reset_label(window.resets_at_epoch_seconds, now_epoch_seconds);
+    draw_text(text_font, reset.as_str(), x, 96, display)?;
+    visible.push(reset);
+    Ok(())
+}
+
+pub(crate) fn quota_reset_label(resets_at_epoch_seconds: i64, now_epoch_seconds: i64) -> String {
+    let seconds = resets_at_epoch_seconds
         .saturating_sub(now_epoch_seconds)
         .max(0);
-    let reset = if seconds >= 86_400 {
+    if seconds >= 86_400 {
         format!("重置 {} 天", (seconds + 86_399) / 86_400)
     } else if seconds >= 3_600 {
         format!("重置 {} 小时", (seconds + 3_599) / 3_600)
     } else {
         format!("重置 {} 分钟", (seconds + 59) / 60)
-    };
-    draw_text(text_font, reset.as_str(), x, 96, display)?;
-    visible.push(reset);
-    Ok(())
+    }
 }
 
 fn draw_text<F: u8g2_fonts::Content>(

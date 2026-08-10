@@ -278,7 +278,9 @@ pub fn compute_state_schema_fingerprint(codex_home: &Path) -> Result<String, Act
 fn collect_rollouts(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(), ActivitySourceError> {
     let entries = match fs::read_dir(directory) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(ActivitySourceError::ReadOnlyObservation);
+        }
         Err(_) => return Err(ActivitySourceError::ReadOnlyObservation),
     };
     for entry in entries {

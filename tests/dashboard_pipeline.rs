@@ -1,7 +1,7 @@
 use codex_zectrix_dashboard::{
     ActivityState, DashboardConfig, ObservedDashboardState, ObservedQuota, ObservedQuotaWindow,
     ObservedTask, PublishDecision, QuotaCache, normalize_dashboard, parse_app_server_quota,
-    render_dashboard, render_normalized_dashboard,
+    render_dashboard, render_normalized_dashboard, render_normalized_dashboard_with_sync,
 };
 use serde::Deserialize;
 
@@ -95,6 +95,27 @@ fn renders_a_400_by_300_monochrome_frame_and_requests_first_publish() {
     );
     assert!(output.visible_text.iter().any(|text| text == "重置 2 小时"));
     assert_eq!(output.publish_decision, PublishDecision::Publish);
+}
+
+#[test]
+fn rendered_page_shows_the_successful_sync_time_without_a_ticking_clock() {
+    let normalized =
+        normalize_dashboard(sample_state(), 1_786_330_000, &DashboardConfig::default());
+
+    let first = render_normalized_dashboard_with_sync(
+        normalized.clone(),
+        1_786_330_000,
+        DashboardConfig::default(),
+        Some(1_786_330_000),
+    )
+    .unwrap();
+    assert!(
+        first
+            .visible_text
+            .iter()
+            .any(|text| text == "上次同步 02:46Z")
+    );
+    assert_eq!(first.normalized, normalized);
 }
 
 #[test]

@@ -223,6 +223,24 @@ fn rollout_observation_reads_minimal_lifecycle_envelopes_without_modifying_codex
 }
 
 #[test]
+fn missing_rollout_directory_is_an_unavailable_source_not_an_empty_activity_list() {
+    let temp = tempfile::tempdir().unwrap();
+    let connection = Connection::open(temp.path().join("state_5.sqlite")).unwrap();
+    connection
+        .execute("create table threads (id text)", [])
+        .unwrap();
+    drop(connection);
+    let observer = ReadonlyRolloutObserver::new(ReadonlyObservationConfig {
+        codex_home: temp.path().to_owned(),
+        installation_salt: SALT.into(),
+        supported_cli_version: "0.147.0-alpha.6.5".into(),
+        supported_schema_sha256: compute_state_schema_fingerprint(temp.path()).unwrap(),
+    });
+
+    assert!(observer.observe().is_err());
+}
+
+#[test]
 fn rollout_observation_fails_closed_for_version_schema_or_lifecycle_drift() {
     let temp = tempfile::tempdir().unwrap();
     let sessions = temp.path().join("sessions");
