@@ -1,38 +1,94 @@
-# Codex Dashboard for ZECTRIX
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="Codex Dashboard for ZECTRIX：在 NOTE4 电子纸上显示 Codex 额度与任务动态">
+</p>
 
-在 macOS 上生成固定的 400×300 NOTE4 示例预览：
+把 Codex 的额度、重置时间和最近任务动态放到一块安静常亮的 ZECTRIX NOTE4 上。macOS companion 在本地读取状态、渲染 400×300 黑白画面，只在内容变化时推送。
+
+## 你会看到什么
+
+<p align="center">
+  <img src="./assets/readme/dashboard-preview.png" width="400" alt="NOTE4 示例画面，显示 Codex 剩余额度、重置时间和三条任务动态">
+</p>
+
+这张图由仓库内的固定 fixture 直接生成，没有使用设计稿代替真实输出。
+
+- Codex 配额剩余百分比、使用量、窗口时长和重置时间
+- 最多三条近期任务动态：`执行中`、`本轮完成`、`失败`或`已中断`
+- 数据源暂时不可用时保留上次状态，并明确标记为可能过期
+- 隐私模式隐藏任务标题，但保留状态和数量
+
+## 工作方式
+
+1. companion 通过官方独立 `codex app-server` 只读请求 `account/rateLimits/read`。
+2. Codex hooks 提供执行事件；只读任务元数据用于匹配顶层任务标题。
+3. 状态在 Mac 本地归一化，并渲染为适合 NOTE4 的 400×300 PNG。
+4. 只有画面发生变化且通过推送节流后，才上传到选定的 ZECTRIX 页面。
+
+程序只处理配额百分比、窗口与重置数据、任务标题，以及受限的任务活动状态。它不会保存或显示提示词、回复、推理、工具参数、计划文本或项目路径。
+
+## 安装
+
+需要 macOS、Codex 和一台 ZECTRIX NOTE4。正式插件已经内置 companion 二进制文件，不需要另外安装 Python、Node.js 或 Rust。
 
 ```sh
-cargo run --release -- preview --input fixtures/sample-dashboard.json --output preview.png
-```
-
-从当前 Codex 额度生成实时预览：
-
-```sh
-cargo run --release -- live-preview --output live-preview.png
-```
-
-`live-preview` 会启动官方独立 `codex app-server`，初始化只读客户端并请求 `account/rateLimits/read`。程序只保留额度百分比、窗口时长、重置时间和结构化的重置额度数量；同一路径再次运行时，若数据源不可用，会沿用本地的上次额度并标记为可能过期。该命令不会连接 Codex Desktop 或 ZECTRIX 设备。
-
-正式插件会内置编译后的 companion 二进制文件，用户不需要安装 Python、Node.js 或 Rust。
-
-## 安装公开插件
-
-```sh
-codex plugin marketplace add BarryBarrywu/codex-zectrix-dashboard --ref v0.1.0
+codex plugin marketplace add BarryBarrywu/codex-zectrix-dashboard
 codex plugin add codex-zectrix-dashboard@codex-zectrix-dashboard
 ```
 
-安装后在 Codex 中使用 `$setup-zectrix-dashboard`。API Key 只通过本机无回显终端输入；setup 会先生成预览并披露上传边界，确认后才进行首次推送。
+安装后，在 Codex 中运行：
 
-更新前使用 `$setup-zectrix-dashboard` 的 guarded update 流程。该流程先刷新 Git marketplace snapshot，在旧 hook 可执行文件仍存在时停用 hooks 和 companion，要求 reload 或 restart，再通过 `lifecycle resume` 安装新版本；不要直接删除旧插件缓存。
-
-## 发布验证
-
-```sh
-./scripts/build-release.sh
-./scripts/test-clean-install.sh
-cargo test --locked --all-features
+```text
+$setup-zectrix-dashboard
 ```
 
-自动化验证、分发包验证与 NOTE4 实机验证分别报告。fixture 或 fake ZECTRIX 通过不代表已完成实机可读性、设备选择、持久 `pageId` 或后续真实推送验证。
+setup 会在本机无回显终端中收集 ZECTRIX API Key，将它保存到 macOS Keychain，并在首次推送前展示预览和上传边界。只有你确认后，画面才会发送到设备。
+
+### 更新
+
+再次运行 `$setup-zectrix-dashboard`，按照 guarded update 流程操作。更新过程中需要 reload 或 restart Codex；不要直接删除旧插件缓存，也不要先运行 `codex plugin marketplace upgrade`。
+
+## 不连接设备也能试用
+
+从仓库生成固定示例：
+
+```sh
+cargo run --locked --release -- preview \
+  --input fixtures/sample-dashboard.json \
+  --output preview.png
+```
+
+读取当前 Codex 配额并生成实时预览：
+
+```sh
+cargo run --locked --release -- live-preview --output live-preview.png
+```
+
+`live-preview` 不会连接 Codex Desktop 或 ZECTRIX 设备。此处从源码运行需要 Rust；安装正式插件则不需要。
+
+## 隐私边界
+
+默认画面包含任务标题，渲染后的 PNG 会上传到 ZECTRIX Cloud。启用隐私模式后，标题会替换为“隐私任务”，但配额、任务状态和计数仍会出现在画面中。
+
+API Key 由 macOS Keychain 保存。诊断输出只报告数据源状态，不输出账户、设备 ID、提示词、回复或其他原始载荷。
+
+## 当前限制
+
+- 仅支持 macOS 和 ZECTRIX NOTE4
+- 不同步 Codex Desktop 的未读蓝点
+- 暂不提供权威的“待你”“检查”状态或计划进度
+- 不能修改、控制或结束 Codex 任务
+- 完成 fixture 与 fake ZECTRIX 测试，不等于完成 NOTE4 实机验证
+
+## 验证
+
+```sh
+cargo test --locked --all-features
+./scripts/build-release.sh
+./scripts/test-clean-install.sh
+```
+
+自动化测试、分发包验证和 NOTE4 实机验证应分别报告。设备选择、持久 `pageId`、首次推送、后续更新和实体屏幕可读性仍需单独进行实机检查。
+
+## License
+
+[MIT](./LICENSE)
