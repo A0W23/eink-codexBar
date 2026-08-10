@@ -304,6 +304,40 @@ fn missing_rollout_directory_is_an_unavailable_source_not_an_empty_activity_list
 }
 
 #[test]
+fn supported_recent_rollouts_remain_available_beside_an_old_cli_rollout() {
+    let temp = tempfile::tempdir().unwrap();
+    let sessions = temp.path().join("sessions");
+    fs::create_dir_all(&sessions).unwrap();
+    let connection = Connection::open(temp.path().join("state_5.sqlite")).unwrap();
+    connection
+        .execute("create table threads (id text)", [])
+        .unwrap();
+    drop(connection);
+    fs::write(
+        sessions.join("rollout-old.jsonl"),
+        "{\"type\":\"session_meta\",\"payload\":{\"id\":\"old-thread\",\"cli_version\":\"0.146.0\"}}\n",
+    )
+    .unwrap();
+    fs::write(
+        sessions.join("rollout-current.jsonl"),
+        concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"current-thread\",\"cli_version\":\"0.147.0-alpha.6.5\"}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"started_at\":1786329990}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"completed_at\":1786329991}}\n"
+        ),
+    )
+    .unwrap();
+    let observer = ReadonlyRolloutObserver::new(ReadonlyObservationConfig {
+        codex_home: temp.path().to_owned(),
+        installation_salt: SALT.into(),
+        supported_cli_version: "0.147.0-alpha.6.5".into(),
+        supported_schema_sha256: compute_state_schema_fingerprint(temp.path()).unwrap(),
+    });
+
+    assert_eq!(observer.observe().unwrap().len(), 2);
+}
+
+#[test]
 fn rollout_observation_fails_closed_for_version_schema_or_lifecycle_drift() {
     let temp = tempfile::tempdir().unwrap();
     let sessions = temp.path().join("sessions");

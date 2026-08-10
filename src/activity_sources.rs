@@ -231,12 +231,24 @@ impl ReadonlyRolloutObserver {
         let mut paths = Vec::new();
         collect_rollouts(&self.config.codex_home.join("sessions"), &mut paths)?;
         let mut events = Vec::new();
+        let mut supported_rollouts = 0;
+        let mut unsupported_versions = 0;
         for path in paths {
-            events.extend(parse_rollout(
+            match parse_rollout(
                 &path,
                 &self.config.installation_salt,
                 &self.config.supported_cli_version,
-            )?);
+            ) {
+                Ok(rollout_events) => {
+                    supported_rollouts += 1;
+                    events.extend(rollout_events);
+                }
+                Err(ActivitySourceError::UnsupportedVersion) => unsupported_versions += 1,
+                Err(error) => return Err(error),
+            }
+        }
+        if supported_rollouts == 0 && unsupported_versions > 0 {
+            return Err(ActivitySourceError::UnsupportedVersion);
         }
         Ok(events)
     }

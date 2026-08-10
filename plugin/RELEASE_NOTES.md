@@ -1,6 +1,6 @@
-# Codex Dashboard for ZECTRIX 0.1.4
+# Codex Dashboard for ZECTRIX 0.1.5
 
-Prevents concurrent Codex hooks from interleaving task activity records and keeps valid activity available when an older cached record is damaged.
+Keeps current task activity available when a recently modified historical rollout was created by an older Codex CLI version.
 
 MVP limitations:
 
