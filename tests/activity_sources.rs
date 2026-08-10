@@ -1,6 +1,9 @@
 use std::fs;
 use std::fs::FileTimes;
+use std::io::Write;
 use std::os::unix::fs::MetadataExt;
+use std::sync::{Arc, Barrier};
+use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
 
 use codex_zectrix_dashboard::{
@@ -137,6 +140,66 @@ fn persisted_hook_records_contain_only_normalized_internal_data() {
     assert!(!persisted.contains("SECRET_PROMPT"));
     assert_eq!(read_hook_events(&path).unwrap(), vec![event]);
     assert_eq!(fs::metadata(path).unwrap().mode() & 0o777, 0o600);
+}
+
+#[test]
+fn corrupted_persisted_hook_record_does_not_hide_valid_task_activity() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("hook-events.jsonl");
+    let first = parse_hook_event(
+        r#"{"hook_event_name":"PreToolUse","session_id":"task-1"}"#,
+        SALT,
+        1_786_329_960,
+    )
+    .unwrap()
+    .unwrap();
+    let second = parse_hook_event(
+        r#"{"hook_event_name":"Stop","session_id":"task-1"}"#,
+        SALT,
+        1_786_330_020,
+    )
+    .unwrap()
+    .unwrap();
+    persist_hook_event(&path, &first).unwrap();
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(b"{interleaved-record}\n")
+        .unwrap();
+    persist_hook_event(&path, &second).unwrap();
+
+    assert_eq!(read_hook_events(&path).unwrap(), vec![first, second]);
+}
+
+#[test]
+fn concurrent_hook_writers_preserve_every_normalized_event() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("hook-events.jsonl");
+    let writer_count = 64;
+    let barrier = Arc::new(Barrier::new(writer_count));
+    let writers = (0..writer_count)
+        .map(|index| {
+            let path = path.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                let event = parse_hook_event(
+                    &format!(r#"{{"hook_event_name":"PreToolUse","session_id":"task-{index}"}}"#),
+                    SALT,
+                    1_786_329_960,
+                )
+                .unwrap()
+                .unwrap();
+                barrier.wait();
+                persist_hook_event(&path, &event).unwrap();
+            })
+        })
+        .collect::<Vec<_>>();
+    for writer in writers {
+        writer.join().unwrap();
+    }
+
+    assert_eq!(read_hook_events(&path).unwrap().len(), writer_count);
 }
 
 #[test]

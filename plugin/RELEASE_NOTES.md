@@ -1,6 +1,6 @@
-# Codex Dashboard for ZECTRIX 0.1.3
+# Codex Dashboard for ZECTRIX 0.1.4
 
-Passes the resolved Codex CLI path to the LaunchAgent so background quota and task observation works outside an interactive shell.
+Prevents concurrent Codex hooks from interleaving task activity records and keeps valid activity available when an older cached record is damaged.
 
 MVP limitations:
 

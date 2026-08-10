@@ -183,9 +183,10 @@ pub fn persist_hook_event(path: &Path, event: &ActivityEvent) -> Result<(), Acti
         .mode(0o600)
         .open(path)
         .map_err(|_| ActivitySourceError::ReadOnlyObservation)?;
-    serde_json::to_writer(&mut file, event)
-        .map_err(|_| ActivitySourceError::ReadOnlyObservation)?;
-    file.write_all(b"\n")
+    let mut record =
+        serde_json::to_vec(event).map_err(|_| ActivitySourceError::ReadOnlyObservation)?;
+    record.push(b'\n');
+    file.write_all(&record)
         .map_err(|_| ActivitySourceError::ReadOnlyObservation)
 }
 
@@ -195,13 +196,14 @@ pub fn read_hook_events(path: &Path) -> Result<Vec<ActivityEvent>, ActivitySourc
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(_) => return Err(ActivitySourceError::ReadOnlyObservation),
     };
-    BufReader::new(file)
-        .lines()
-        .map(|line| {
-            let line = line.map_err(|_| ActivitySourceError::ReadOnlyObservation)?;
-            serde_json::from_str(&line).map_err(|_| ActivitySourceError::UnsupportedHook)
-        })
-        .collect()
+    let mut events = Vec::new();
+    for line in BufReader::new(file).lines() {
+        let line = line.map_err(|_| ActivitySourceError::ReadOnlyObservation)?;
+        if let Ok(event) = serde_json::from_str(&line) {
+            events.push(event);
+        }
+    }
+    Ok(events)
 }
 
 #[derive(Clone, Debug)]
