@@ -93,6 +93,8 @@ fn renders_a_400_by_300_monochrome_frame_and_requests_first_publish() {
             .iter()
             .all(|pixel| matches!(pixel, 0 | 255))
     );
+    assert_eq!(output.frame.pixels[0], 0);
+    assert_eq!(output.frame.pixels[133 * 400], 255);
     assert!(output.visible_text.iter().any(|text| text == "重置 2 小时"));
     assert_eq!(output.publish_decision, PublishDecision::Publish);
 }
@@ -124,7 +126,7 @@ fn sample_state_has_a_stable_hash_and_suppresses_an_identical_frame() {
         render_dashboard(sample_state(), 1_786_330_000, DashboardConfig::default()).unwrap();
     assert_eq!(
         first.frame.sha256,
-        "613d6077905801338eae713eb627a2dc689b225e09957663bbbbce69ff5842a3"
+        "672ceb2e446cdd6986d529d71e7b0560c7e44ad4a7a69075130a4cdea9eb2b43"
     );
 
     let second = render_dashboard(
@@ -184,6 +186,23 @@ fn titles_are_visible_by_default_and_hidden_in_privacy_mode() {
         &visible.frame.pixels[title_region.clone()],
         &hidden.frame.pixels[title_region]
     );
+}
+
+#[test]
+fn long_task_titles_stop_before_the_right_display_edge() {
+    let mut state = sample_state();
+    let title = "研究如何让墨水屏上的超长任务标题保持清晰且不会越过右侧边界";
+    state.tasks[0].title = title.into();
+
+    let output = render_dashboard(state, 1_786_330_000, DashboardConfig::default()).unwrap();
+
+    assert!(output.visible_text.iter().any(|text| text == title));
+    for y in 170..192 {
+        assert!(
+            (387..400).all(|x| output.frame.pixels[y * 400 + x] == 255),
+            "title crossed the right safe edge at row {y}"
+        );
+    }
 }
 
 #[test]
@@ -375,9 +394,9 @@ fn two_window_fixture_renders_both_windows_and_positive_reset_credits() {
         DashboardConfig::default(),
     )
     .unwrap();
-    let center_of_bar = 66 * 400 + 200;
-    assert_eq!(one_window.frame.pixels[center_of_bar], 0);
-    assert_eq!(output.frame.pixels[center_of_bar], 255);
+    let center_of_single_bar = 98 * 400 + 200;
+    assert_eq!(one_window.frame.pixels[center_of_single_bar], 255);
+    assert_eq!(output.frame.pixels[center_of_single_bar], 0);
 }
 
 #[test]

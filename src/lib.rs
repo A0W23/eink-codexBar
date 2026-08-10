@@ -19,7 +19,8 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use u8g2_fonts::FontRenderer;
 use u8g2_fonts::fonts::{
-    u8g2_font_logisoso24_tn, u8g2_font_wqy13_t_gb2312, u8g2_font_wqy15_t_gb2312,
+    u8g2_font_logisoso30_tn, u8g2_font_logisoso42_tn, u8g2_font_wqy13_t_gb2312,
+    u8g2_font_wqy15_t_gb2312, u8g2_font_wqy16_t_gb2312,
 };
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
@@ -589,8 +590,14 @@ fn draw_dashboard(
     let mut display = FrameDisplay::new();
     let text_font = FontRenderer::new::<u8g2_font_wqy13_t_gb2312>();
     let body_font = FontRenderer::new::<u8g2_font_wqy15_t_gb2312>();
-    let number_font = FontRenderer::new::<u8g2_font_logisoso24_tn>();
+    let section_font = FontRenderer::new::<u8g2_font_wqy16_t_gb2312>();
+    let hero_number_font = FontRenderer::new::<u8g2_font_logisoso42_tn>();
+    let compact_number_font = FontRenderer::new::<u8g2_font_logisoso30_tn>();
     let mut visible = Vec::new();
+
+    Rectangle::new(Point::zero(), Size::new(DISPLAY_WIDTH, 132))
+        .draw_styled(&PrimitiveStyle::with_fill(BinaryColor::On), &mut display)
+        .unwrap();
 
     let date = current_date_label(now_epoch_seconds);
     let date_header = if state.quota.stale {
@@ -602,8 +609,9 @@ fn draw_dashboard(
         &text_font,
         date_header.as_str(),
         386,
-        20,
+        21,
         HorizontalAlignment::Right,
+        BinaryColor::Off,
         &mut display,
     )?;
     visible.push(date);
@@ -612,34 +620,39 @@ fn draw_dashboard(
     }
 
     match state.quota.windows.as_slice() {
-        [window] => draw_quota_window(
+        [window] => draw_single_quota_window(
             window,
-            14,
-            366,
             now_epoch_seconds,
             &text_font,
-            &number_font,
+            &body_font,
+            &hero_number_font,
             &mut display,
             &mut visible,
         )?,
         [first, second] => {
-            draw_quota_window(
+            draw_text_color(&body_font, "额度", 14, 21, BinaryColor::Off, &mut display)?;
+            Rectangle::new(Point::new(200, 34), Size::new(1, 56))
+                .draw_styled(&PrimitiveStyle::with_fill(BinaryColor::Off), &mut display)
+                .unwrap();
+            draw_compact_quota_window(
                 first,
                 14,
-                172,
+                186,
                 now_epoch_seconds,
                 &text_font,
-                &number_font,
+                &body_font,
+                &compact_number_font,
                 &mut display,
                 &mut visible,
             )?;
-            draw_quota_window(
+            draw_compact_quota_window(
                 second,
                 214,
-                172,
+                386,
                 now_epoch_seconds,
                 &text_font,
-                &number_font,
+                &body_font,
+                &compact_number_font,
                 &mut display,
                 &mut visible,
             )?;
@@ -657,8 +670,9 @@ fn draw_dashboard(
             &text_font,
             credits.as_str(),
             386,
-            100,
+            125,
             HorizontalAlignment::Right,
+            BinaryColor::Off,
             &mut display,
         )?;
         visible.push(credits);
@@ -671,39 +685,40 @@ fn draw_dashboard(
         .min()
         .unwrap_or_default();
     let quota_message = quota_message(lowest_remaining);
-    draw_text(&body_font, quota_message, 14, 121, &mut display)?;
+    draw_text_color(
+        &body_font,
+        quota_message,
+        14,
+        125,
+        BinaryColor::Off,
+        &mut display,
+    )?;
     visible.push(quota_message.into());
 
-    Rectangle::new(Point::new(0, 132), Size::new(DISPLAY_WIDTH, 2))
-        .draw_styled(&PrimitiveStyle::with_fill(BinaryColor::On), &mut display)
-        .unwrap();
-    draw_text(&body_font, "任务动态", 14, 155, &mut display)?;
+    draw_text(&section_font, "任务动态", 14, 159, &mut display)?;
     visible.push("任务动态".into());
     if state.task_activity_stale {
         draw_text_aligned(
             &text_font,
             "任务数据可能已过期",
             386,
-            154,
+            158,
             HorizontalAlignment::Right,
+            BinaryColor::On,
             &mut display,
         )?;
         visible.push("任务数据可能已过期".into());
     }
 
     for (index, task) in state.tasks.iter().enumerate() {
-        let y = 184 + index as i32 * 32;
+        let y = 187 + index as i32 * 31;
         let label = task.state.label();
-        draw_text(&body_font, label, 14, y, &mut display)?;
+        draw_text(&text_font, label, 14, y, &mut display)?;
         visible.push(label.into());
         let title = task.title.as_deref().unwrap_or("隐私任务");
-        draw_text(&body_font, title, 104, y, &mut display)?;
+        let fitted_title = fit_text(&body_font, title, 294);
+        draw_text(&body_font, fitted_title.as_str(), 92, y, &mut display)?;
         visible.push(title.into());
-        if index < state.tasks.len() - 1 {
-            Rectangle::new(Point::new(14, y + 9), Size::new(372, 1))
-                .draw_styled(&PrimitiveStyle::with_fill(BinaryColor::On), &mut display)
-                .unwrap();
-        }
     }
 
     Rectangle::new(Point::new(14, 272), Size::new(372, 1))
@@ -725,6 +740,7 @@ fn draw_dashboard(
             386,
             292,
             HorizontalAlignment::Right,
+            BinaryColor::On,
             &mut display,
         )?;
         visible.push(sync);
@@ -733,43 +749,156 @@ fn draw_dashboard(
     Ok((display.pixels, visible))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn draw_quota_window(
+fn draw_single_quota_window(
     window: &NormalizedQuotaWindow,
-    x: i32,
-    width: u32,
     now_epoch_seconds: i64,
     text_font: &FontRenderer,
+    body_font: &FontRenderer,
     number_font: &FontRenderer,
     display: &mut FrameDisplay,
     visible: &mut Vec<String>,
 ) -> Result<(), DashboardError> {
-    draw_text(text_font, window.name.as_str(), x, 22, display)?;
+    let heading = format!("{}额度", window.name);
+    draw_text_color(
+        body_font,
+        heading.as_str(),
+        14,
+        21,
+        BinaryColor::Off,
+        display,
+    )?;
     visible.push(window.name.clone());
 
     let remaining = window.remaining_percent.to_string();
-    draw_text(number_font, remaining.as_str(), x, 58, display)?;
-    draw_text(text_font, "%", x + 50, 58, display)?;
+    draw_text_color(
+        number_font,
+        remaining.as_str(),
+        14,
+        83,
+        BinaryColor::Off,
+        display,
+    )?;
+    let percentage_x = 20 + i32::try_from(remaining.len()).unwrap_or(3) * 27;
+    draw_text_color(
+        body_font,
+        "% 剩余",
+        percentage_x,
+        82,
+        BinaryColor::Off,
+        display,
+    )?;
     visible.push(format!("{remaining}%"));
 
     let used = format!("已用 {}%", window.used_percent);
-    draw_text(text_font, used.as_str(), x + 78, 54, display)?;
+    draw_text_aligned(
+        body_font,
+        used.as_str(),
+        386,
+        58,
+        HorizontalAlignment::Right,
+        BinaryColor::Off,
+        display,
+    )?;
     visible.push(used);
 
-    Rectangle::new(Point::new(x, 66), Size::new(width, 12))
-        .draw_styled(&PrimitiveStyle::with_stroke(BinaryColor::On, 1), display)
-        .unwrap();
-    let used_width = width.saturating_sub(4) * u32::from(window.used_percent) / 100;
-    if used_width > 0 {
-        Rectangle::new(Point::new(x + 2, 68), Size::new(used_width, 8))
-            .draw_styled(&PrimitiveStyle::with_fill(BinaryColor::On), display)
-            .unwrap();
-    }
+    let reset = quota_reset_label(window.resets_at_epoch_seconds, now_epoch_seconds);
+    draw_text_aligned(
+        text_font,
+        reset.as_str(),
+        386,
+        82,
+        HorizontalAlignment::Right,
+        BinaryColor::Off,
+        display,
+    )?;
+    visible.push(reset);
+
+    draw_quota_bar(window.remaining_percent, 14, 94, 372, 10, display);
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_compact_quota_window(
+    window: &NormalizedQuotaWindow,
+    x: i32,
+    right_x: i32,
+    now_epoch_seconds: i64,
+    text_font: &FontRenderer,
+    body_font: &FontRenderer,
+    number_font: &FontRenderer,
+    display: &mut FrameDisplay,
+    visible: &mut Vec<String>,
+) -> Result<(), DashboardError> {
+    draw_text_color(
+        text_font,
+        window.name.as_str(),
+        x,
+        43,
+        BinaryColor::Off,
+        display,
+    )?;
+    visible.push(window.name.clone());
+
+    let used = format!("已用 {}%", window.used_percent);
+    draw_text_aligned(
+        text_font,
+        used.as_str(),
+        right_x,
+        43,
+        HorizontalAlignment::Right,
+        BinaryColor::Off,
+        display,
+    )?;
+    visible.push(used);
+
+    let remaining = window.remaining_percent.to_string();
+    draw_text_color(
+        number_font,
+        remaining.as_str(),
+        x,
+        81,
+        BinaryColor::Off,
+        display,
+    )?;
+    let percentage_x = x + 4 + i32::try_from(remaining.len()).unwrap_or(3) * 20;
+    draw_text_color(
+        body_font,
+        "% 剩余",
+        percentage_x,
+        80,
+        BinaryColor::Off,
+        display,
+    )?;
+    visible.push(format!("{remaining}%"));
+
+    draw_quota_bar(window.remaining_percent, x, 88, 172, 8, display);
 
     let reset = quota_reset_label(window.resets_at_epoch_seconds, now_epoch_seconds);
-    draw_text(text_font, reset.as_str(), x, 96, display)?;
+    draw_text_color(text_font, reset.as_str(), x, 111, BinaryColor::Off, display)?;
     visible.push(reset);
     Ok(())
+}
+
+fn draw_quota_bar(
+    remaining_percent: u8,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    display: &mut FrameDisplay,
+) {
+    Rectangle::new(Point::new(x, y), Size::new(width, height))
+        .draw_styled(&PrimitiveStyle::with_stroke(BinaryColor::Off, 1), display)
+        .unwrap();
+    let fill_width = width.saturating_sub(4) * u32::from(remaining_percent) / 100;
+    if fill_width > 0 {
+        Rectangle::new(
+            Point::new(x + 2, y + 2),
+            Size::new(fill_width, height.saturating_sub(4)),
+        )
+        .draw_styled(&PrimitiveStyle::with_fill(BinaryColor::Off), display)
+        .unwrap();
+    }
 }
 
 pub(crate) fn quota_reset_label(resets_at_epoch_seconds: i64, now_epoch_seconds: i64) -> String {
@@ -792,11 +921,42 @@ fn draw_text<F: u8g2_fonts::Content>(
     baseline_y: i32,
     display: &mut FrameDisplay,
 ) -> Result<(), DashboardError> {
+    draw_text_color(font, content, x, baseline_y, BinaryColor::On, display)
+}
+
+fn fit_text(font: &FontRenderer, content: &str, max_width: i32) -> String {
+    let mut fitted = String::new();
+    for character in content.chars() {
+        let mut candidate = fitted.clone();
+        candidate.push(character);
+        let dimensions = font
+            .get_rendered_dimensions(
+                candidate.as_str(),
+                Point::zero(),
+                VerticalPosition::Baseline,
+            )
+            .unwrap();
+        if dimensions.advance.x > max_width {
+            break;
+        }
+        fitted.push(character);
+    }
+    fitted
+}
+
+fn draw_text_color<F: u8g2_fonts::Content>(
+    font: &FontRenderer,
+    content: F,
+    x: i32,
+    baseline_y: i32,
+    color: BinaryColor,
+    display: &mut FrameDisplay,
+) -> Result<(), DashboardError> {
     font.render(
         content,
         Point::new(x, baseline_y),
         VerticalPosition::Baseline,
-        FontColor::Transparent(BinaryColor::On),
+        FontColor::Transparent(color),
         display,
     )
     .map(|_| ())
@@ -809,6 +969,7 @@ fn draw_text_aligned<F: u8g2_fonts::Content>(
     x: i32,
     baseline_y: i32,
     alignment: HorizontalAlignment,
+    color: BinaryColor,
     display: &mut FrameDisplay,
 ) -> Result<(), DashboardError> {
     font.render_aligned(
@@ -816,7 +977,7 @@ fn draw_text_aligned<F: u8g2_fonts::Content>(
         Point::new(x, baseline_y),
         VerticalPosition::Baseline,
         alignment,
-        FontColor::Transparent(BinaryColor::On),
+        FontColor::Transparent(color),
         display,
     )
     .map(|_| ())

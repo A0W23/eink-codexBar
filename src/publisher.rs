@@ -263,7 +263,7 @@ impl PublishCoordinator {
 
 fn visible_state_hash(state: &NormalizedDashboardState, now_epoch_seconds: i64) -> String {
     let mut digest = Sha256::new();
-    digest.update(b"codex-zectrix-visible-state-v1\0");
+    digest.update(b"codex-zectrix-visible-state-v3\0");
     digest.update(crate::current_date_label(now_epoch_seconds).as_bytes());
     for window in &state.quota.windows {
         digest.update(window.name.as_bytes());
