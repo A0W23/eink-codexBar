@@ -200,6 +200,7 @@ pub struct HookMetadata {
     pub timeout_sec: u64,
     pub status_message: Option<String>,
     pub additional_context_limit: Option<u64>,
+    pub source_path: PathBuf,
     pub plugin_id: Option<String>,
     pub enabled: bool,
     pub is_managed: bool,

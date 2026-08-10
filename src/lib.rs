@@ -28,8 +28,8 @@ pub use activity_sources::{
 };
 pub use app_server::{AppServerClient, AppServerError, HookMetadata};
 pub use plugin_lifecycle::{
-    LifecycleAction, LifecycleError, LifecycleState, PluginLifecycle, hook_is_tombstoned,
-    record_hook_owner, reviewed_plugin_hooks,
+    LifecycleAction, LifecycleError, LifecycleState, PluginLifecycle, find_codex_owner_pid,
+    hook_is_tombstoned, record_hook_owner, reviewed_plugin_hooks,
 };
 pub use publisher::{
     FramePublisher, MIN_PUSH_INTERVAL_SECONDS, PublishAttempt, PublishCoordinator, PublisherState,
@@ -38,6 +38,10 @@ pub use publisher::{
 
 pub const DISPLAY_WIDTH: u32 = 400;
 pub const DISPLAY_HEIGHT: u32 = 300;
+pub const PLUGIN_BINARY: &str = "codex-zectrix-dashboard";
+pub const LAUNCH_AGENT_LABEL: &str = "com.barrybarrywu.codex-zectrix-dashboard";
+pub const KEYCHAIN_SERVICE: &str = "com.barrybarrywu.codex-zectrix-dashboard";
+pub const KEYCHAIN_ACCOUNT: &str = "zectrix-api-key";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ObservedQuotaWindow {

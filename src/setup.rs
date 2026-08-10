@@ -6,8 +6,8 @@ use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use codex_zectrix_dashboard::{
-    AppServerClient, DashboardConfig, ObservedDashboardState, ObservedQuota, QuotaCache,
-    render_dashboard,
+    AppServerClient, DashboardConfig, KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE, ObservedDashboardState,
+    ObservedQuota, QuotaCache, render_dashboard,
 };
 use reqwest::blocking::Client;
 use reqwest::blocking::multipart::{Form, Part};
@@ -15,8 +15,6 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-const KEYCHAIN_SERVICE: &str = "com.barrybarrywu.codex-zectrix-dashboard";
-const KEYCHAIN_ACCOUNT: &str = "zectrix-api-key";
 const NOTE4_BOARD: &str = "bread-compact-wifi";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

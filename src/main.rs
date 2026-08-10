@@ -8,8 +8,9 @@ use codex_zectrix_dashboard::{
     AppServerClient, DashboardConfig, ObservedDashboardState, ObservedQuota, ObservedTask,
     PluginLifecycle, PublishAttempt, PublishCoordinator, PublisherState, QuotaCache,
     ReadonlyObservationConfig, ReadonlyRolloutObserver, TaskActivityCache, TaskActivitySnapshot,
-    ZectrixPublisher, hook_is_tombstoned, parse_hook_event, persist_hook_event, read_hook_events,
-    record_hook_owner, reduce_task_activity, render_dashboard,
+    ZectrixPublisher, find_codex_owner_pid, hook_is_tombstoned, parse_hook_event,
+    persist_hook_event, read_hook_events, record_hook_owner, reduce_task_activity,
+    render_dashboard,
 };
 
 mod setup;
@@ -174,7 +175,13 @@ fn record_hook() -> Result<(), Box<dyn std::error::Error>> {
     let owner_pid = env::var("CODEX_ZECTRIX_HOOK_OWNER_PID")
         .ok()
         .and_then(|value| value.parse().ok())
-        .unwrap_or_else(|| unsafe { libc::getppid() as u32 });
+        .or_else(|| {
+            let ps = env::var_os("CODEX_ZECTRIX_PS_BIN")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("/bin/ps"));
+            find_codex_owner_pid(&ps, unsafe { libc::getppid() as u32 })
+        })
+        .unwrap_or(0);
     record_hook_owner(&data_dir, owner_pid);
     let mut input = String::new();
     if std::io::stdin().read_to_string(&mut input).is_err() {
@@ -214,7 +221,16 @@ fn run_lifecycle(arguments: Vec<String>) -> Result<(), Box<dyn std::error::Error
     let launchctl = env::var_os("CODEX_ZECTRIX_LAUNCHCTL_BIN")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/bin/launchctl"));
-    let lifecycle = PluginLifecycle::new(data_dir()?, codex, launchctl);
+    let launch_agents_dir = env::var_os("CODEX_ZECTRIX_LAUNCH_AGENTS_DIR")
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/LaunchAgents"))
+        })
+        .ok_or("无法确定 LaunchAgents 目录")?;
+    let ps = env::var_os("CODEX_ZECTRIX_PS_BIN")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/bin/ps"));
+    let lifecycle = PluginLifecycle::new(data_dir()?, codex, launchctl, launch_agents_dir, ps);
     match action {
         "install" => lifecycle.install(
             plugin_root.as_deref().ok_or("install 缺少 --plugin-root")?,

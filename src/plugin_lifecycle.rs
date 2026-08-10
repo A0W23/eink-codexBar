@@ -6,10 +6,29 @@ use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{AppServerClient, HookMetadata};
+use crate::{
+    AppServerClient, HookMetadata, KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE, LAUNCH_AGENT_LABEL,
+    PLUGIN_BINARY,
+};
 
-const REVIEWED_EVENTS: [&str; 4] = ["PostToolUse", "PreToolUse", "Stop", "UserPromptSubmit"];
-const REVIEWED_COMMAND: &str = "\"${CLAUDE_PLUGIN_ROOT}/bin/codex-zectrix-dashboard\" hook-record";
+const REVIEWED_HOOKS: [(&str, &str); 4] = [
+    (
+        "postToolUse",
+        "sha256:17b77d2f37d63dd85cc2e38772206476e89d3f0103a9dca736f811058927368e",
+    ),
+    (
+        "preToolUse",
+        "sha256:d063f36a5ca5702387c3ad9113a6f269fb237390b3dd3ce711aafce9068d9d9a",
+    ),
+    (
+        "stop",
+        "sha256:34792817128542de402eba581bddd8029a9831085edb19585233fb1c54018039",
+    ),
+    (
+        "userPromptSubmit",
+        "sha256:0c9f3f0266c19378ac76046c24257c3159981424760443eed39e2ff3931da7f5",
+    ),
+];
 
 #[derive(Debug, thiserror::Error)]
 pub enum LifecycleError {
@@ -32,6 +51,7 @@ pub enum LifecycleError {
 pub fn reviewed_plugin_hooks(
     discovered: Vec<HookMetadata>,
     plugin_id: &str,
+    plugin_root: &Path,
 ) -> Result<Vec<HookMetadata>, LifecycleError> {
     let mut selected = discovered
         .into_iter()
@@ -41,28 +61,35 @@ pub fn reviewed_plugin_hooks(
         .iter()
         .map(|hook| hook.event_name.as_str())
         .collect::<BTreeSet<_>>();
-    if events != REVIEWED_EVENTS.into_iter().collect() || selected.len() != REVIEWED_EVENTS.len() {
+    let reviewed_events = REVIEWED_HOOKS
+        .iter()
+        .map(|(event, _)| *event)
+        .collect::<BTreeSet<_>>();
+    if events != reviewed_events || selected.len() != REVIEWED_HOOKS.len() {
         return Err(LifecycleError::HookSet);
     }
     if selected.iter().any(|hook| {
-        hook.is_managed
-            || hook
-                .current_hash
-                .strip_prefix("sha256:")
-                .is_none_or(|hash| {
-                    hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
-                })
+        REVIEWED_HOOKS
+            .iter()
+            .find(|(event, _)| *event == hook.event_name)
+            .is_none_or(|(_, hash)| *hash != hook.current_hash)
     }) {
         return Err(LifecycleError::HookHash);
     }
+    let expected_command = format!(
+        "\"{}\" hook-record",
+        plugin_root.join("bin").join(PLUGIN_BINARY).display()
+    );
     if selected.iter().any(|hook| {
-        hook.handler_type != "command"
+        hook.is_managed
+            || hook.handler_type != "command"
             || hook.execution_mode != "sync"
             || hook.matcher.is_some()
-            || hook.command.as_deref() != Some(REVIEWED_COMMAND)
+            || hook.command.as_deref() != Some(expected_command.as_str())
             || hook.timeout_sec != 5
             || hook.status_message.is_some()
             || hook.additional_context_limit.is_some()
+            || hook.source_path != plugin_root.join("hooks/hooks.json")
     }) {
         return Err(LifecycleError::HookDefinition);
     }
@@ -94,6 +121,16 @@ pub enum LifecycleState {
         next_plugin_root: Option<PathBuf>,
         owner_pids: Vec<u32>,
     },
+    FinalizingUpdate {
+        plugin_id: String,
+        plugin_root: PathBuf,
+        next_plugin_id: String,
+        next_plugin_root: PathBuf,
+    },
+    FinalizingUninstall {
+        plugin_id: String,
+        plugin_root: PathBuf,
+    },
 }
 
 pub struct PluginLifecycle {
@@ -101,6 +138,8 @@ pub struct PluginLifecycle {
     codex: AppServerClient,
     codex_program: PathBuf,
     launchctl: PathBuf,
+    launch_agents_dir: PathBuf,
+    ps_program: PathBuf,
 }
 
 impl PluginLifecycle {
@@ -108,22 +147,44 @@ impl PluginLifecycle {
         data_dir: impl AsRef<Path>,
         codex_program: impl AsRef<Path>,
         launchctl: impl AsRef<Path>,
+        launch_agents_dir: impl AsRef<Path>,
+        ps_program: impl AsRef<Path>,
     ) -> Self {
         Self {
             data_dir: data_dir.as_ref().to_owned(),
             codex: AppServerClient::new(&codex_program),
             codex_program: codex_program.as_ref().to_owned(),
             launchctl: launchctl.as_ref().to_owned(),
+            launch_agents_dir: launch_agents_dir.as_ref().to_owned(),
+            ps_program: ps_program.as_ref().to_owned(),
         }
     }
 
     pub fn install(&self, plugin_root: &Path, plugin_id: &str) -> Result<(), LifecycleError> {
         fs::create_dir_all(&self.data_dir).map_err(|_| LifecycleError::State)?;
+        fs::write(self.data_dir.join("hook-owner-pids"), []).map_err(|_| LifecycleError::State)?;
+        let hooks = self.activate(plugin_root, plugin_id)?;
+        self.write_state(&LifecycleState::Active {
+            plugin_id: plugin_id.into(),
+            plugin_root: plugin_root.to_owned(),
+            hooks,
+        })?;
+        Ok(())
+    }
+
+    fn activate(
+        &self,
+        plugin_root: &Path,
+        plugin_id: &str,
+    ) -> Result<Vec<HookMetadata>, LifecycleError> {
+        if !plugin_root.join("bin").join(PLUGIN_BINARY).is_file() {
+            return Err(LifecycleError::State);
+        }
         let hooks = self
             .codex
             .list_hooks(plugin_root)
             .map_err(|_| LifecycleError::HookConfiguration)?;
-        let hooks = reviewed_plugin_hooks(hooks, plugin_id)?;
+        let hooks = reviewed_plugin_hooks(hooks, plugin_id, plugin_root)?;
         self.codex
             .configure_hooks(&hooks, true)
             .map_err(|_| LifecycleError::HookConfiguration)?;
@@ -131,7 +192,7 @@ impl PluginLifecycle {
             .codex
             .list_hooks(plugin_root)
             .map_err(|_| LifecycleError::HookConfiguration)?;
-        let configured = reviewed_plugin_hooks(configured, plugin_id)?;
+        let configured = reviewed_plugin_hooks(configured, plugin_id, plugin_root)?;
         if configured.iter().any(|hook| {
             !hook.enabled
                 || hook.trust_status != "trusted"
@@ -145,11 +206,7 @@ impl PluginLifecycle {
         }
         self.write_launch_agent(plugin_root)?;
         self.bootstrap_companion()?;
-        self.write_state(&LifecycleState::Active {
-            plugin_id: plugin_id.into(),
-            plugin_root: plugin_root.to_owned(),
-            hooks,
-        })
+        Ok(hooks)
     }
 
     pub fn begin_update(
@@ -157,6 +214,11 @@ impl PluginLifecycle {
         next_plugin_root: &Path,
         next_plugin_id: &str,
     ) -> Result<(), LifecycleError> {
+        if let LifecycleState::Active { plugin_root, .. } = self.read_state()?
+            && plugin_root == next_plugin_root
+        {
+            return Err(LifecycleError::State);
+        }
         self.begin(
             LifecycleAction::Update,
             Some(next_plugin_root.to_owned()),
@@ -189,13 +251,17 @@ impl PluginLifecycle {
             .codex
             .list_hooks(&plugin_root)
             .map_err(|_| LifecycleError::HookConfiguration)?;
-        let current = reviewed_plugin_hooks(current, &plugin_id)?;
+        let current = reviewed_plugin_hooks(current, &plugin_id, &plugin_root)?;
         if current.iter().any(|hook| hook.enabled) {
             return Err(LifecycleError::HookConfiguration);
         }
         self.stop_companion()?;
         fs::write(plugin_root.join("bin/.codex-zectrix-tombstone"), [])
             .map_err(|_| LifecycleError::State)?;
+        let mut owner_pids = read_owner_pids(&self.data_dir);
+        owner_pids.extend(running_desktop_codex_pids(&self.ps_program));
+        owner_pids.sort_unstable();
+        owner_pids.dedup();
         self.write_state(&LifecycleState::AwaitingReload {
             action,
             plugin_id,
@@ -203,71 +269,158 @@ impl PluginLifecycle {
             hooks,
             next_plugin_id,
             next_plugin_root,
-            owner_pids: read_owner_pids(&self.data_dir),
+            owner_pids,
         })
     }
 
     pub fn resume(&self) -> Result<(), LifecycleError> {
-        let LifecycleState::AwaitingReload {
-            action,
-            plugin_id,
-            plugin_root,
-            hooks: _,
-            next_plugin_id,
-            next_plugin_root,
-            owner_pids,
-        } = self.read_state()?
-        else {
-            return Err(LifecycleError::State);
+        let state = self.read_state()?;
+        let state = match state {
+            LifecycleState::AwaitingReload {
+                action,
+                plugin_id,
+                plugin_root,
+                hooks: _,
+                next_plugin_id,
+                next_plugin_root,
+                owner_pids,
+            } => {
+                if owner_pids.into_iter().any(process_is_alive)
+                    || !self.old_hooks_inactive(&plugin_root, &plugin_id)?
+                {
+                    return Err(LifecycleError::ReloadRequired);
+                }
+                let state = match action {
+                    LifecycleAction::Update => LifecycleState::FinalizingUpdate {
+                        plugin_id,
+                        plugin_root,
+                        next_plugin_id: next_plugin_id.ok_or(LifecycleError::State)?,
+                        next_plugin_root: next_plugin_root.ok_or(LifecycleError::State)?,
+                    },
+                    LifecycleAction::Uninstall => LifecycleState::FinalizingUninstall {
+                        plugin_id,
+                        plugin_root,
+                    },
+                };
+                self.write_state(&state)?;
+                state
+            }
+            state @ (LifecycleState::FinalizingUpdate { .. }
+            | LifecycleState::FinalizingUninstall { .. }) => state,
+            LifecycleState::Active { .. } => return Err(LifecycleError::State),
         };
-        if owner_pids.into_iter().any(process_is_alive) {
-            return Err(LifecycleError::ReloadRequired);
-        }
-        match action {
-            LifecycleAction::Update => {
-                let root = next_plugin_root.ok_or(LifecycleError::State)?;
-                let id = next_plugin_id.ok_or(LifecycleError::State)?;
-                self.install(&root, &id)?;
-                match fs::remove_file(plugin_root.join("bin/codex-zectrix-dashboard")) {
-                    Ok(()) => {}
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(_) => return Err(LifecycleError::State),
-                }
-            }
-            LifecycleAction::Uninstall => {
-                let security = std::env::var_os("CODEX_ZECTRIX_SECURITY_BIN")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("/usr/bin/security"));
-                let credential_status = Command::new(security)
-                    .args([
-                        "delete-generic-password",
-                        "-a",
-                        "zectrix-api-key",
-                        "-s",
-                        "com.barrybarrywu.codex-zectrix-dashboard",
-                    ])
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status()
+        match state {
+            LifecycleState::FinalizingUpdate {
+                plugin_id: _,
+                plugin_root,
+                next_plugin_id,
+                next_plugin_root,
+            } => {
+                self.refresh_plugin(&next_plugin_id)?;
+                fs::write(self.data_dir.join("hook-owner-pids"), [])
                     .map_err(|_| LifecycleError::State)?;
-                if !credential_status.success() && credential_status.code() != Some(44) {
-                    return Err(LifecycleError::State);
-                }
-                let status = Command::new(&self.codex_program)
-                    .args(["plugin", "remove", &plugin_id, "--json"])
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status()
-                    .map_err(|_| LifecycleError::State)?;
-                if !status.success() {
-                    return Err(LifecycleError::State);
-                }
-                let _ = fs::remove_dir_all(&self.data_dir);
+                let hooks = self.activate(&next_plugin_root, &next_plugin_id)?;
+                remove_if_present(&plugin_root.join("bin").join(PLUGIN_BINARY))?;
+                remove_if_present(&plugin_root.join("bin/.codex-zectrix-tombstone"))?;
+                self.write_state(&LifecycleState::Active {
+                    plugin_id: next_plugin_id,
+                    plugin_root: next_plugin_root,
+                    hooks,
+                })?;
+            }
+            LifecycleState::FinalizingUninstall {
+                plugin_id,
+                plugin_root,
+            } => self.finish_uninstall(&plugin_id, &plugin_root)?,
+            _ => return Err(LifecycleError::State),
+        }
+        Ok(())
+    }
+
+    fn old_hooks_inactive(
+        &self,
+        plugin_root: &Path,
+        plugin_id: &str,
+    ) -> Result<bool, LifecycleError> {
+        let hooks = self
+            .codex
+            .list_hooks(plugin_root)
+            .map_err(|_| LifecycleError::HookConfiguration)?;
+        let plugin_hooks = hooks
+            .into_iter()
+            .filter(|hook| hook.plugin_id.as_deref() == Some(plugin_id))
+            .collect::<Vec<_>>();
+        if plugin_hooks.is_empty() {
+            return Ok(true);
+        }
+        Ok(reviewed_plugin_hooks(plugin_hooks, plugin_id, plugin_root)?
+            .iter()
+            .all(|hook| !hook.enabled))
+    }
+
+    fn finish_uninstall(&self, plugin_id: &str, plugin_root: &Path) -> Result<(), LifecycleError> {
+        let security = std::env::var_os("CODEX_ZECTRIX_SECURITY_BIN")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/usr/bin/security"));
+        let credential_status = Command::new(security)
+            .args([
+                "delete-generic-password",
+                "-a",
+                KEYCHAIN_ACCOUNT,
+                "-s",
+                KEYCHAIN_SERVICE,
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|_| LifecycleError::State)?;
+        if !credential_status.success() && credential_status.code() != Some(44) {
+            return Err(LifecycleError::State);
+        }
+        let status = Command::new(&self.codex_program)
+            .args(["plugin", "remove", plugin_id, "--json"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|_| LifecycleError::State)?;
+        if !status.success() {
+            let hooks = self
+                .codex
+                .list_hooks(plugin_root)
+                .map_err(|_| LifecycleError::State)?;
+            if hooks
+                .iter()
+                .any(|hook| hook.plugin_id.as_deref() == Some(plugin_id))
+            {
+                return Err(LifecycleError::State);
             }
         }
-        let _ = fs::remove_file(plugin_root.join("bin/.codex-zectrix-tombstone"));
+        remove_if_present(&self.plist_path())?;
+        fs::remove_dir_all(&self.data_dir).map_err(|_| LifecycleError::State)
+    }
+
+    fn refresh_plugin(&self, plugin_id: &str) -> Result<(), LifecycleError> {
+        let (_, marketplace) = plugin_id.rsplit_once('@').ok_or(LifecycleError::State)?;
+        if marketplace.is_empty() {
+            return Err(LifecycleError::State);
+        }
+        for arguments in [
+            vec!["plugin", "marketplace", "upgrade", marketplace, "--json"],
+            vec!["plugin", "add", plugin_id, "--json"],
+        ] {
+            let status = Command::new(&self.codex_program)
+                .args(arguments)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map_err(|_| LifecycleError::State)?;
+            if !status.success() {
+                return Err(LifecycleError::State);
+            }
+        }
         Ok(())
     }
 
@@ -278,6 +431,8 @@ impl PluginLifecycle {
             LifecycleState::AwaitingReload {
                 hooks, owner_pids, ..
             } => ("awaiting_reload", hooks.len(), owner_pids.len()),
+            LifecycleState::FinalizingUpdate { .. } => ("finalizing_update", 4, 0),
+            LifecycleState::FinalizingUninstall { .. } => ("finalizing_uninstall", 4, 0),
         };
         Ok(format!(
             "lifecycle_phase={phase}\nreviewed_hooks={hooks}\ncached_owner_processes={owners}\n"
@@ -285,16 +440,21 @@ impl PluginLifecycle {
     }
 
     fn write_launch_agent(&self, plugin_root: &Path) -> Result<(), LifecycleError> {
-        let executable = plugin_root.join("bin/codex-zectrix-dashboard");
+        let executable = plugin_root.join("bin").join(PLUGIN_BINARY);
         let plist = format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict><key>Label</key><string>com.barrybarrywu.codex-zectrix-dashboard</string><key>ProgramArguments</key><array><string>{}</string><string>companion</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>",
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict><key>Label</key><string>{LAUNCH_AGENT_LABEL}</string><key>ProgramArguments</key><array><string>{}</string><string>companion</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>",
             xml_escape(&executable.to_string_lossy())
         );
+        fs::create_dir_all(&self.launch_agents_dir).map_err(|_| LifecycleError::State)?;
         fs::write(self.plist_path(), plist).map_err(|_| LifecycleError::State)
     }
 
     fn bootstrap_companion(&self) -> Result<(), LifecycleError> {
         let domain = format!("gui/{}", unsafe { libc::geteuid() });
+        let service = format!("{domain}/{LAUNCH_AGENT_LABEL}");
+        let _ = Command::new(&self.launchctl)
+            .args(["bootout", &service])
+            .status();
         let status = Command::new(&self.launchctl)
             .args(["bootstrap", &domain])
             .arg(self.plist_path())
@@ -307,9 +467,7 @@ impl PluginLifecycle {
     }
 
     fn stop_companion(&self) -> Result<(), LifecycleError> {
-        let service = format!("gui/{}/com.barrybarrywu.codex-zectrix-dashboard", unsafe {
-            libc::geteuid()
-        });
+        let service = format!("gui/{}/{LAUNCH_AGENT_LABEL}", unsafe { libc::geteuid() });
         let status = Command::new(&self.launchctl)
             .args(["bootout", &service])
             .status()
@@ -325,7 +483,8 @@ impl PluginLifecycle {
     }
 
     fn plist_path(&self) -> PathBuf {
-        self.data_dir.join("companion.plist")
+        self.launch_agents_dir
+            .join(format!("{LAUNCH_AGENT_LABEL}.plist"))
     }
 
     fn read_state(&self) -> Result<LifecycleState, LifecycleError> {
@@ -352,6 +511,59 @@ pub fn record_hook_owner(data_dir: &Path, owner_pid: u32) {
     }
 }
 
+pub fn find_codex_owner_pid(ps_program: &Path, mut pid: u32) -> Option<u32> {
+    for _ in 0..8 {
+        let output = Command::new(ps_program)
+            .args(["-o", "ppid=", "-o", "comm=", "-p"])
+            .arg(pid.to_string())
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let line = String::from_utf8(output.stdout).ok()?;
+        let mut fields = line.trim().splitn(2, char::is_whitespace);
+        let parent_pid = fields.next()?.parse().ok()?;
+        let command = fields.next()?.trim();
+        if Path::new(command)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name == "codex")
+        {
+            return Some(pid);
+        }
+        if parent_pid <= 1 || parent_pid == pid {
+            return None;
+        }
+        pid = parent_pid;
+    }
+    None
+}
+
+fn running_desktop_codex_pids(ps_program: &Path) -> Vec<u32> {
+    let output = match Command::new(ps_program)
+        .args(["-axo", "pid=,comm="])
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return vec![0],
+    };
+    String::from_utf8(output.stdout)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.trim().splitn(2, char::is_whitespace);
+            let pid = fields.next()?.parse().ok()?;
+            let command = fields.next()?.trim();
+            (command.contains("/ChatGPT.app/")
+                && Path::new(command)
+                    .file_name()
+                    .is_some_and(|name| name == "codex"))
+            .then_some(pid)
+        })
+        .collect()
+}
+
 pub fn hook_is_tombstoned(executable: &Path) -> bool {
     executable
         .parent()
@@ -369,7 +581,18 @@ fn read_owner_pids(data_dir: &Path) -> Vec<u32> {
 }
 
 fn process_is_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return true;
+    }
     unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
+fn remove_if_present(path: &Path) -> Result<(), LifecycleError> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(LifecycleError::State),
+    }
 }
 
 fn xml_escape(value: &str) -> String {
