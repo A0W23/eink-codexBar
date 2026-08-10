@@ -138,6 +138,7 @@ pub struct PublishCoordinator {
     state: PublisherState,
     pending: Option<PendingDashboard>,
     latest_observed: Option<NormalizedDashboardState>,
+    latest_visible_hash: Option<String>,
 }
 
 impl PublishCoordinator {
@@ -147,14 +148,15 @@ impl PublishCoordinator {
             state,
             pending: None,
             latest_observed: None,
+            latest_visible_hash: None,
         }
     }
 
     pub fn observe(&mut self, observed: ObservedDashboardState, now_epoch_seconds: i64) -> bool {
         let normalized = normalize_dashboard(observed, now_epoch_seconds, &self.config);
-        let current_visible_hash = visible_state_hash(&normalized);
+        let current_visible_hash = visible_state_hash(&normalized, now_epoch_seconds);
         let changed = if let Some(previous) = self.latest_observed.as_ref() {
-            visible_state_hash(previous) != current_visible_hash
+            self.latest_visible_hash.as_deref() != Some(&current_visible_hash)
                 || reset_labels_changed(previous, &normalized, now_epoch_seconds)
         } else {
             self.state.last_visible_state_hash.as_deref() != Some(&current_visible_hash)
@@ -165,6 +167,7 @@ impl PublishCoordinator {
                 )
         };
         self.latest_observed = Some(normalized.clone());
+        self.latest_visible_hash = Some(current_visible_hash.clone());
         if changed {
             self.pending = Some(PendingDashboard {
                 normalized,
@@ -258,9 +261,10 @@ impl PublishCoordinator {
     }
 }
 
-fn visible_state_hash(state: &NormalizedDashboardState) -> String {
+fn visible_state_hash(state: &NormalizedDashboardState, now_epoch_seconds: i64) -> String {
     let mut digest = Sha256::new();
     digest.update(b"codex-zectrix-visible-state-v1\0");
+    digest.update(crate::current_date_label(now_epoch_seconds).as_bytes());
     for window in &state.quota.windows {
         digest.update(window.name.as_bytes());
         digest.update([0, window.used_percent, window.remaining_percent]);

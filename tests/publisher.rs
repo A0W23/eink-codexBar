@@ -114,6 +114,17 @@ fn visible_changes_coalesce_and_retries_keep_the_newest_state_behind_the_interva
 }
 
 #[test]
+fn a_new_local_date_refreshes_an_otherwise_unchanged_dashboard() {
+    let mut coordinator =
+        PublishCoordinator::new(DashboardConfig::default(), PublisherState::default());
+    let state = observed("任务", ActivityState::Running);
+
+    assert!(coordinator.observe(state.clone(), 0));
+    assert!(!coordinator.observe(state.clone(), 60));
+    assert!(coordinator.observe(state, 2 * 24 * 60 * 60));
+}
+
+#[test]
 fn fake_zectrix_service_verifies_multipart_interval_retry_and_recovery() {
     let secret = "SECRET_API_KEY";
     let (base_url, requests) = fake_zectrix_service(secret);

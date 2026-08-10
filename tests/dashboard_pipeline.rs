@@ -113,7 +113,7 @@ fn rendered_page_shows_the_successful_sync_time_without_a_ticking_clock() {
         first
             .visible_text
             .iter()
-            .any(|text| text == "上次同步 02:46Z")
+            .any(|text| text.starts_with("上次同步 "))
     );
     assert_eq!(first.normalized, normalized);
 }
@@ -124,7 +124,7 @@ fn sample_state_has_a_stable_hash_and_suppresses_an_identical_frame() {
         render_dashboard(sample_state(), 1_786_330_000, DashboardConfig::default()).unwrap();
     assert_eq!(
         first.frame.sha256,
-        "a48103eb1d9127396570cf078684b02ed40259e2c265dadda501bcb95744feae"
+        "613d6077905801338eae713eb627a2dc689b225e09957663bbbbce69ff5842a3"
     );
 
     let second = render_dashboard(
@@ -320,11 +320,33 @@ fn one_window_fixture_uses_the_full_quota_area_and_omits_zero_reset_credits() {
     assert!(output.visible_text.iter().any(|text| text == "已用 37%"));
     assert!(output.visible_text.iter().any(|text| text == "重置 2 小时"));
     assert!(
+        output
+            .visible_text
+            .iter()
+            .any(|text| text == "还能蹬，别急着坐下。")
+    );
+    assert!(
         !output
             .visible_text
             .iter()
             .any(|text| text.contains("重置额度"))
     );
+}
+
+#[test]
+fn quota_message_tracks_the_lowest_remaining_window() {
+    for (used_percent, expected) in [
+        (10, "站起来蹬！"),
+        (30, "还能蹬，别急着坐下。"),
+        (60, "悠着点蹬，链条开始响了。"),
+        (80, "省着点，车快散架了。"),
+        (95, "就等Tibo重置了。"),
+    ] {
+        let mut state = sample_state();
+        state.quota.windows[0].used_percent = used_percent;
+        let output = render_dashboard(state, 1_786_330_000, DashboardConfig::default()).unwrap();
+        assert!(output.visible_text.iter().any(|text| text == expected));
+    }
 }
 
 #[test]

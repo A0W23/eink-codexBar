@@ -18,8 +18,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use u8g2_fonts::FontRenderer;
-use u8g2_fonts::fonts::{u8g2_font_logisoso24_tn, u8g2_font_wqy13_t_gb2312};
-use u8g2_fonts::types::{FontColor, VerticalPosition};
+use u8g2_fonts::fonts::{
+    u8g2_font_logisoso24_tn, u8g2_font_wqy13_t_gb2312, u8g2_font_wqy15_t_gb2312,
+};
+use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
 pub use activity_sources::{
     ActivitySourceError, ReadonlyObservationConfig, ReadonlyRolloutObserver,
@@ -586,8 +588,28 @@ fn draw_dashboard(
 ) -> Result<(Vec<u8>, Vec<String>), DashboardError> {
     let mut display = FrameDisplay::new();
     let text_font = FontRenderer::new::<u8g2_font_wqy13_t_gb2312>();
+    let body_font = FontRenderer::new::<u8g2_font_wqy15_t_gb2312>();
     let number_font = FontRenderer::new::<u8g2_font_logisoso24_tn>();
     let mut visible = Vec::new();
+
+    let date = current_date_label(now_epoch_seconds);
+    let date_header = if state.quota.stale {
+        format!("数据旧  {date}")
+    } else {
+        date.clone()
+    };
+    draw_text_aligned(
+        &text_font,
+        date_header.as_str(),
+        386,
+        20,
+        HorizontalAlignment::Right,
+        &mut display,
+    )?;
+    visible.push(date);
+    if state.quota.stale {
+        visible.push("数据可能已过期".into());
+    }
 
     match state.quota.windows.as_slice() {
         [window] => draw_quota_window(
@@ -631,53 +653,80 @@ fn draw_dashboard(
 
     if state.quota.reset_credits > 0 {
         let credits = format!("重置额度 {}", state.quota.reset_credits);
-        draw_text(&text_font, credits.as_str(), 286, 22, &mut display)?;
+        draw_text_aligned(
+            &text_font,
+            credits.as_str(),
+            386,
+            100,
+            HorizontalAlignment::Right,
+            &mut display,
+        )?;
         visible.push(credits);
     }
-    if state.quota.stale {
-        draw_text(&text_font, "数据可能已过期", 286, 98, &mut display)?;
-        visible.push("数据可能已过期".into());
-    }
+    let lowest_remaining = state
+        .quota
+        .windows
+        .iter()
+        .map(|window| window.remaining_percent)
+        .min()
+        .unwrap_or_default();
+    let quota_message = quota_message(lowest_remaining);
+    draw_text(&body_font, quota_message, 14, 121, &mut display)?;
+    visible.push(quota_message.into());
 
-    Rectangle::new(Point::new(0, 103), Size::new(DISPLAY_WIDTH, 2))
+    Rectangle::new(Point::new(0, 132), Size::new(DISPLAY_WIDTH, 2))
         .draw_styled(&PrimitiveStyle::with_fill(BinaryColor::On), &mut display)
         .unwrap();
-    draw_text(&text_font, "任务动态", 14, 128, &mut display)?;
+    draw_text(&body_font, "任务动态", 14, 155, &mut display)?;
     visible.push("任务动态".into());
     if state.task_activity_stale {
-        draw_text(&text_font, "任务数据可能已过期", 246, 128, &mut display)?;
+        draw_text_aligned(
+            &text_font,
+            "任务数据可能已过期",
+            386,
+            154,
+            HorizontalAlignment::Right,
+            &mut display,
+        )?;
         visible.push("任务数据可能已过期".into());
     }
 
     for (index, task) in state.tasks.iter().enumerate() {
-        let y = 162 + index as i32 * 48;
+        let y = 184 + index as i32 * 32;
         let label = task.state.label();
-        draw_text(&text_font, label, 14, y, &mut display)?;
+        draw_text(&body_font, label, 14, y, &mut display)?;
         visible.push(label.into());
         let title = task.title.as_deref().unwrap_or("隐私任务");
-        draw_text(&text_font, title, 104, y, &mut display)?;
+        draw_text(&body_font, title, 104, y, &mut display)?;
         visible.push(title.into());
         if index < state.tasks.len() - 1 {
-            Rectangle::new(Point::new(14, y + 16), Size::new(366, 1))
+            Rectangle::new(Point::new(14, y + 9), Size::new(372, 1))
                 .draw_styled(&PrimitiveStyle::with_fill(BinaryColor::On), &mut display)
                 .unwrap();
         }
     }
 
+    Rectangle::new(Point::new(14, 272), Size::new(372, 1))
+        .draw_styled(&PrimitiveStyle::with_fill(BinaryColor::On), &mut display)
+        .unwrap();
+
     if state.hidden_task_count > 0 {
         let overflow = format!("另有 {} 项", state.hidden_task_count);
-        draw_text(&text_font, overflow.as_str(), 286, 286, &mut display)?;
+        draw_text(&text_font, overflow.as_str(), 14, 292, &mut display)?;
         visible.push(overflow);
     }
 
     if let Some(timestamp) = last_successful_sync_epoch_seconds {
-        let seconds = timestamp.rem_euclid(24 * 60 * 60);
-        let sync = format!(
-            "上次同步 {:02}:{:02}Z",
-            seconds / 3_600,
-            seconds % 3_600 / 60
-        );
-        draw_text(&text_font, sync.as_str(), 304, 298, &mut display)?;
+        let (hour, minute) = local_time(timestamp);
+        let sync = format!("上次同步 {hour:02}:{minute:02}");
+        draw_text_aligned(
+            &text_font,
+            sync.as_str(),
+            386,
+            292,
+            HorizontalAlignment::Right,
+            &mut display,
+        )?;
         visible.push(sync);
     }
 
@@ -752,6 +801,60 @@ fn draw_text<F: u8g2_fonts::Content>(
     )
     .map(|_| ())
     .map_err(|error| DashboardError::Font(format!("{error:?}")))
+}
+
+fn draw_text_aligned<F: u8g2_fonts::Content>(
+    font: &FontRenderer,
+    content: F,
+    x: i32,
+    baseline_y: i32,
+    alignment: HorizontalAlignment,
+    display: &mut FrameDisplay,
+) -> Result<(), DashboardError> {
+    font.render_aligned(
+        content,
+        Point::new(x, baseline_y),
+        VerticalPosition::Baseline,
+        alignment,
+        FontColor::Transparent(BinaryColor::On),
+        display,
+    )
+    .map(|_| ())
+    .map_err(|error| DashboardError::Font(format!("{error:?}")))
+}
+
+fn quota_message(remaining_percent: u8) -> &'static str {
+    match remaining_percent {
+        81..=100 => "站起来蹬！",
+        51..=80 => "还能蹬，别急着坐下。",
+        31..=50 => "悠着点蹬，链条开始响了。",
+        11..=30 => "省着点，车快散架了。",
+        _ => "就等Tibo重置了。",
+    }
+}
+
+pub(crate) fn current_date_label(epoch_seconds: i64) -> String {
+    let time = local_tm(epoch_seconds);
+    let weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+    let weekday = usize::try_from(time.tm_wday)
+        .ok()
+        .and_then(|index| weekdays.get(index))
+        .unwrap_or(&"周几");
+    format!("{}月{}日 {weekday}", time.tm_mon + 1, time.tm_mday)
+}
+
+fn local_time(epoch_seconds: i64) -> (i32, i32) {
+    let time = local_tm(epoch_seconds);
+    (time.tm_hour, time.tm_min)
+}
+
+fn local_tm(epoch_seconds: i64) -> libc::tm {
+    let timestamp = epoch_seconds as libc::time_t;
+    let mut time = unsafe { std::mem::zeroed::<libc::tm>() };
+    unsafe {
+        libc::localtime_r(&timestamp, &mut time);
+    }
+    time
 }
 
 struct FrameDisplay {
