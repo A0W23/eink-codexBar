@@ -30,6 +30,14 @@
 
 需要 macOS、Codex 和一台 ZECTRIX NOTE4。正式插件已经内置 companion 二进制文件，不需要另外安装 Python、Node.js 或 Rust。
 
+### 准备 ZECTRIX API Key
+
+1. 打开并登录 [ZECTRIX 极趣云平台](https://cloud.zectrix.com)。
+2. 进入「开放 API」，点击「创建 API Key」。
+3. 妥善保存生成的 Key；它等同账号密码，请勿粘贴到聊天中或提交到代码仓库。
+
+完整接口说明参见 [ZECTRIX 官方 API 文档](https://wiki.zectrix.com/zh/software/api-docs)。setup 会在本机读取 API Key，自动列出兼容的 NOTE4 设备，并让你选择要使用的持久页面，无需手动填写设备 MAC 地址或编辑配置文件。
+
 ```sh
 codex plugin marketplace add BarryBarrywu/codex-zectrix-dashboard
 codex plugin add codex-zectrix-dashboard@codex-zectrix-dashboard
@@ -88,6 +96,13 @@ cargo test --locked --all-features
 ```
 
 自动化测试、分发包验证和 NOTE4 实机验证应分别报告。设备选择、持久 `pageId`、首次推送、后续更新和实体屏幕可读性仍需单独进行实机检查。
+
+## 关注我们
+
+如果这个小工具对你有帮助，欢迎在 B 站关注我们：
+
+- [极趣实验室（硬件官方）](https://space.bilibili.com/13131424)：了解 ZECTRIX 墨水屏、桌搭硬件和更多开源玩法。
+- [最近使用（项目作者）](https://space.bilibili.com/217963572)：分享苹果生态、AI 工具与效率实践。
 
 ## License
 
