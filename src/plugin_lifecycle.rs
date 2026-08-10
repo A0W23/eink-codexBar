@@ -161,6 +161,10 @@ impl PluginLifecycle {
     }
 
     pub fn install(&self, plugin_root: &Path, plugin_id: &str) -> Result<(), LifecycleError> {
+        if self.state_path().exists() {
+            return Err(LifecycleError::State);
+        }
+        self.add_plugin(plugin_id)?;
         fs::create_dir_all(&self.data_dir).map_err(|_| LifecycleError::State)?;
         fs::write(self.data_dir.join("hook-owner-pids"), []).map_err(|_| LifecycleError::State)?;
         let hooks = self.activate(plugin_root, plugin_id)?;
@@ -406,22 +410,28 @@ impl PluginLifecycle {
         if marketplace.is_empty() {
             return Err(LifecycleError::State);
         }
-        for arguments in [
-            vec!["plugin", "marketplace", "upgrade", marketplace, "--json"],
-            vec!["plugin", "add", plugin_id, "--json"],
-        ] {
-            let status = Command::new(&self.codex_program)
-                .args(arguments)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .map_err(|_| LifecycleError::State)?;
-            if !status.success() {
-                return Err(LifecycleError::State);
-            }
+        let status = Command::new(&self.codex_program)
+            .args(["plugin", "marketplace", "upgrade", marketplace, "--json"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|_| LifecycleError::State)?;
+        if !status.success() {
+            return Err(LifecycleError::State);
         }
-        Ok(())
+        self.add_plugin(plugin_id)
+    }
+
+    fn add_plugin(&self, plugin_id: &str) -> Result<(), LifecycleError> {
+        let status = Command::new(&self.codex_program)
+            .args(["plugin", "add", plugin_id, "--json"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|_| LifecycleError::State)?;
+        status.success().then_some(()).ok_or(LifecycleError::State)
     }
 
     pub fn diagnostics(&self) -> Result<String, LifecycleError> {

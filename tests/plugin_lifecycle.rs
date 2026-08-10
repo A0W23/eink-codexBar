@@ -229,6 +229,7 @@ fn update_keeps_the_cached_hook_callable_until_desktop_reload_is_verified() {
     let fixture = LifecycleFixture::new();
     fixture.install();
     let requests = fs::read_to_string(&fixture.codex_log).unwrap();
+    assert!(requests.contains("plugin add codex-zectrix-dashboard@local --json"));
     assert!(
         requests
             .contains("sha256:d063f36a5ca5702387c3ad9113a6f269fb237390b3dd3ce711aafce9068d9d9a")
@@ -264,19 +265,12 @@ fn update_keeps_the_cached_hook_callable_until_desktop_reload_is_verified() {
             .is_file()
     );
 
-    let mut cached_hook = Command::new(fixture.old_binary());
-    cached_hook
-        .arg("hook-record")
-        .env("CODEX_ZECTRIX_DATA_DIR", &fixture.data_dir)
-        .stdin(Stdio::piped());
-    let mut cached_hook = cached_hook.spawn().unwrap();
-    cached_hook
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(br#"{"hook_event_name":"PreToolUse","session_id":"cached"}"#)
-        .unwrap();
-    assert!(cached_hook.wait().unwrap().success());
+    assert!(fixture.run_tool(&fixture.old_binary()).status.success());
+    assert!(
+        fs::read_to_string(&fixture.codex_log)
+            .unwrap()
+            .contains("tool_execution_completed")
+    );
 
     let diagnostics = fixture.run(&["lifecycle", "diagnostics"]);
     let diagnostics = String::from_utf8(diagnostics.stdout).unwrap();
@@ -412,6 +406,7 @@ fn uninstall_waits_for_the_recorded_desktop_owner_then_removes_state_and_credent
     assert!(hook.wait().unwrap().success());
 
     assert!(fixture.run(&["lifecycle", "uninstall"]).status.success());
+    assert!(fixture.run_tool(&fixture.old_binary()).status.success());
     let blocked = fixture.run(&["lifecycle", "resume"]);
     assert!(!blocked.status.success());
     assert!(String::from_utf8_lossy(&blocked.stderr).contains("reload 或 restart"));
@@ -475,6 +470,12 @@ impl LifecycleFixture {
             &codex,
             &format!(
                 r#"#!/bin/sh
+if [ "$1" = "tool" ]; then
+  printf '%s' '{{"hook_event_name":"PreToolUse","session_id":"later-tool"}}' | "$3" hook-record
+  result=$?
+  [ "$result" -eq 0 ] && printf '%s\n' 'tool_execution_completed' >> '{}'
+  exit "$result"
+fi
 if [ "$1" = "plugin" ]; then
   printf '%s\n' "$*" >> '{}'
   exit 0
@@ -511,6 +512,7 @@ for event in postToolUse preToolUse stop userPromptSubmit; do
 done
 printf '],"warnings":[],"errors":[]}}]}}}}\n'
 "#,
+                codex_log.display(),
                 codex_log.display(),
                 codex_log.display(),
                 configured.display(),
@@ -585,6 +587,15 @@ printf '],"warnings":[],"errors":[]}}]}}}}\n'
             .env("CODEX_ZECTRIX_SECURITY_BIN", &self.security)
             .env("CODEX_ZECTRIX_LAUNCH_AGENTS_DIR", &self.launch_agents_dir)
             .env("CODEX_ZECTRIX_PS_BIN", &self.ps)
+            .output()
+            .unwrap()
+    }
+
+    fn run_tool(&self, cached_hook: &std::path::Path) -> std::process::Output {
+        Command::new(&self.codex)
+            .args(["tool", "execute"])
+            .arg(cached_hook)
+            .env("CODEX_ZECTRIX_DATA_DIR", &self.data_dir)
             .output()
             .unwrap()
     }
