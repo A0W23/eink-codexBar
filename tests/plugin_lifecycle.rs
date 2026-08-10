@@ -282,6 +282,10 @@ fn update_keeps_the_cached_hook_callable_until_desktop_reload_is_verified() {
     .unwrap();
     assert!(launch_agent.contains("<string>companion</string>"));
     assert!(launch_agent.contains("<key>KeepAlive</key><true/>"));
+    assert!(launch_agent.contains(&format!(
+        "<key>CODEX_ZECTRIX_CODEX_BIN</key><string>{}</string>",
+        fixture.codex.display()
+    )));
 
     let output = fixture.run(&[
         "lifecycle",
@@ -650,7 +654,11 @@ printf '],"warnings":[],"errors":[]}}]}}}}\n'
         Command::new(common::dashboard_binary())
             .args(args)
             .env("CODEX_ZECTRIX_DATA_DIR", &self.data_dir)
-            .env("CODEX_ZECTRIX_CODEX_BIN", &self.codex)
+            .env("CODEX_ZECTRIX_CODEX_BIN", self.codex.file_name().unwrap())
+            .env(
+                "PATH",
+                format!("{}:/usr/bin:/bin", self.temp.path().display()),
+            )
             .env("CODEX_ZECTRIX_LAUNCHCTL_BIN", &self.launchctl)
             .env("CODEX_ZECTRIX_SECURITY_BIN", &self.security)
             .env("CODEX_ZECTRIX_LAUNCH_AGENTS_DIR", &self.launch_agents_dir)

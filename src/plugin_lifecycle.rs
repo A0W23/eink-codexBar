@@ -184,10 +184,11 @@ impl PluginLifecycle {
         launch_agents_dir: impl AsRef<Path>,
         ps_program: impl AsRef<Path>,
     ) -> Self {
+        let codex_program = resolve_program(codex_program.as_ref());
         Self {
             data_dir: data_dir.as_ref().to_owned(),
             codex: AppServerClient::new(&codex_program),
-            codex_program: codex_program.as_ref().to_owned(),
+            codex_program,
             launchctl: launchctl.as_ref().to_owned(),
             launch_agents_dir: launch_agents_dir.as_ref().to_owned(),
             ps_program: ps_program.as_ref().to_owned(),
@@ -477,8 +478,9 @@ impl PluginLifecycle {
     fn write_launch_agent(&self, plugin_root: &Path) -> Result<(), LifecycleError> {
         let executable = plugin_root.join("bin").join(PLUGIN_BINARY);
         let plist = format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict><key>Label</key><string>{LAUNCH_AGENT_LABEL}</string><key>ProgramArguments</key><array><string>{}</string><string>companion</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>",
-            xml_escape(&executable.to_string_lossy())
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict><key>Label</key><string>{LAUNCH_AGENT_LABEL}</string><key>ProgramArguments</key><array><string>{}</string><string>companion</string></array><key>EnvironmentVariables</key><dict><key>CODEX_ZECTRIX_CODEX_BIN</key><string>{}</string></dict><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>",
+            xml_escape(&executable.to_string_lossy()),
+            xml_escape(&self.codex_program.to_string_lossy())
         );
         fs::create_dir_all(&self.launch_agents_dir).map_err(|_| LifecycleError::State)?;
         fs::write(self.plist_path(), plist).map_err(|_| LifecycleError::State)
@@ -622,6 +624,18 @@ fn read_owner_pids(data_dir: &Path) -> Vec<u32> {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
+}
+
+fn resolve_program(program: &Path) -> PathBuf {
+    if program.components().count() > 1 {
+        return program.to_owned();
+    }
+    std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .map(|directory| directory.join(program))
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| program.to_owned())
 }
 
 fn process_is_alive(pid: u32) -> bool {

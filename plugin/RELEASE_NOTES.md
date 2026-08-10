@@ -1,6 +1,6 @@
-# Codex Dashboard for ZECTRIX 0.1.2
+# Codex Dashboard for ZECTRIX 0.1.3
 
-Stores the ZECTRIX API Key through the native macOS Security framework without a second terminal prompt. Updates now tolerate Codex switching marketplace metadata to the future plugin root while preserving exact hook key and hash checks.
+Passes the resolved Codex CLI path to the LaunchAgent so background quota and task observation works outside an interactive shell.
 
 MVP limitations:
 
