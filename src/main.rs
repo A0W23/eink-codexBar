@@ -8,6 +8,8 @@ use codex_zectrix_dashboard::{
     render_dashboard,
 };
 
+mod setup;
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("{error}");
@@ -19,9 +21,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args().skip(1);
     let command = args
         .next()
-        .ok_or("用法：codex-zectrix-dashboard <preview|live-preview> ...")?;
+        .ok_or("用法：codex-zectrix-dashboard <preview|live-preview|setup> ...")?;
+    if command == "setup" {
+        if args.next().is_some() {
+            return Err("setup 不接受命令行参数".into());
+        }
+        return setup::run_setup();
+    }
     if !matches!(command.as_str(), "preview" | "live-preview") {
-        return Err("用法：codex-zectrix-dashboard <preview|live-preview> ...".into());
+        return Err("用法：codex-zectrix-dashboard <preview|live-preview|setup> ...".into());
     }
 
     let mut input = None;
