@@ -472,8 +472,17 @@ impl PluginLifecycle {
             .args(["bootout", &service])
             .status()
             .map_err(|_| LifecycleError::Companion)?;
-        status
-            .success()
+        if status.success() {
+            return Ok(());
+        }
+        let print = Command::new(&self.launchctl)
+            .args(["print", &service])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|_| LifecycleError::Companion)?;
+        (!print.success())
             .then_some(())
             .ok_or(LifecycleError::Companion)
     }
