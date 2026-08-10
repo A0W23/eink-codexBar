@@ -1,0 +1,20 @@
+{
+  "name": "zectrix-plugin-hooks-prototype",
+  "interface": {
+    "displayName": "ZECTRIX Plugin Hooks Prototype"
+  },
+  "plugins": [
+    {
+      "name": "zectrix-hooks-readonly",
+      "source": {
+        "source": "local",
+        "path": "./plugin"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Engineering"
+    }
+  ]
+}
