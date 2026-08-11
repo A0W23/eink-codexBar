@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
+  <title id="title">NOTE4 看板规格展示</title>
+  <desc id="desc">一个 400×300 的黑白 Codex 看板示意，标注配额、重置时间、任务动态和隐私状态。</desc>
+  <rect width="1200" height="620" rx="24" fill="#11110f"/>
+  <text x="56" y="54" fill="#9d9a90" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" letter-spacing="2">ANNOTATED SPECIMEN / 400 × 300</text>
+  <text x="56" y="112" fill="#fffef9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif" font-size="42" font-weight="750">一眼看到配额与任务动态</text>
+  <g transform="translate(400 162)">
+    <rect x="0" y="0" width="480" height="360" rx="22" fill="#050504" stroke="#64625c" stroke-width="2"/>
+    <rect x="18" y="18" width="444" height="324" rx="5" fill="#fffef9"/>
+    <g transform="translate(42 42)" fill="#11110f" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif">
+      <text x="0" y="0" dominant-baseline="hanging" font-size="22">5 小时额度</text><text x="0" y="82" font-size="62" font-weight="700">63%</text><text x="190" y="80" font-size="22">已用 37%</text>
+      <rect x="0" y="98" width="396" height="14" fill="none" stroke="#11110f" stroke-width="2"/><rect x="3" y="101" width="145" height="8" fill="#11110f"/>
+      <text x="0" y="148" font-size="22">重置 2 小时</text><path d="M0 174H396" stroke="#11110f" stroke-width="2"/>
+      <text x="0" y="210" font-size="22" font-weight="700">任务动态</text><circle cx="8" cy="244" r="7"/><text x="28" y="251" font-size="20">README 视觉资产</text><text x="346" y="251" font-size="18">执行中</text>
+      <path d="M0 260H396" stroke="#c9c6bb"/><circle cx="8" cy="283" r="7" fill="none" stroke="#11110f" stroke-width="2"/><text x="28" y="290" font-size="20">本地状态同步</text><text x="326" y="290" font-size="18">本轮完成</text>
+    </g>
+  </g>
+  <g fill="none" stroke="#c9c6bb" stroke-width="2"><path d="M208 220H380"/><path d="M380 220L370 212M380 220L370 228"/><path d="M820 268H1000"/><path d="M820 268L830 260M820 268L830 276"/><path d="M206 468H380"/><path d="M380 468L370 460M380 468L370 476"/><path d="M820 472H1000"/><path d="M820 472L830 464M820 472L830 480"/></g>
+  <g fill="#fffef9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif" font-size="21"><text x="56" y="212">额度窗口</text><text x="56" y="240" fill="#9d9a90" font-size="18">剩余与已用并列</text><text x="1012" y="260">重置时间</text><text x="1012" y="288" fill="#9d9a90" font-size="18">避免频繁查看 App</text><text x="56" y="460">任务动态</text><text x="56" y="488" fill="#9d9a90" font-size="18">最多三条近期状态</text><text x="1012" y="464">黑白输出</text><text x="1012" y="492" fill="#9d9a90" font-size="18">适配 NOTE4 电子纸</text></g>
+  <g transform="translate(56 570)" fill="#9d9a90" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18"><text x="0" y="0">REAL OUTPUT AVAILABLE AS dashboard-preview.png</text><text x="870" y="0">NO COLOR REQUIRED</text></g>
+</svg>

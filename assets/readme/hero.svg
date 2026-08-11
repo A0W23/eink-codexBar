@@ -1,49 +1,52 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400" role="img" aria-labelledby="title desc">
   <title id="title">Codex Dashboard for ZECTRIX</title>
-  <desc id="desc">A monochrome e-ink dashboard that keeps Codex quota and task activity visible on a ZECTRIX NOTE4.</desc>
-
+  <desc id="desc">Codex quota and task activity travel from a local macOS companion to a 400 by 300 ZECTRIX NOTE4 e-ink display.</desc>
   <rect width="1200" height="400" rx="24" fill="#f2f0e8"/>
-  <path d="M0 320H1200" stroke="#c9c6bb"/>
-  <path d="M744 0V400" stroke="#c9c6bb"/>
-
-  <g transform="translate(56 48)">
-    <text x="0" y="0" dominant-baseline="hanging" fill="#64625c" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" letter-spacing="2">MACOS COMPANION · ZECTRIX NOTE4</text>
-    <text x="0" y="82" fill="#11110f" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif" font-size="70" font-weight="800" letter-spacing="-2">CODEX</text>
-    <text x="0" y="148" fill="#11110f" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif" font-size="70" font-weight="800" letter-spacing="-2">DASHBOARD</text>
-    <text x="2" y="206" fill="#34332f" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif" font-size="26">把额度与任务动态，留在桌面的电子纸上。</text>
+  <path d="M56 42H1144M56 322H1144" stroke="#c9c6bb"/>
+  <g fill="#64625c" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" letter-spacing="1.5">
+    <text x="56" y="28">LOCAL CODEX STATUS / E-INK OUTPUT</text>
+    <text x="1006" y="28">400 × 300</text>
   </g>
-
-  <g transform="translate(56 346)" fill="#34332f" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">
-    <text x="0" y="0">400 × 300</text>
-    <text x="140" y="0">LOCAL RENDER</text>
-    <text x="330" y="0">PRIVACY MODE</text>
-  </g>
-
-  <g transform="translate(786 48)">
-    <rect x="0" y="0" width="358" height="268" rx="18" fill="#11110f"/>
-    <rect x="16" y="16" width="326" height="236" rx="5" fill="#fffef9"/>
-
-    <g transform="translate(30 30)" fill="#11110f" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif">
-      <text x="0" y="0" dominant-baseline="hanging" font-size="18">5 小时</text>
-      <text x="0" y="54" font-size="42" font-weight="600">63</text>
-      <text x="53" y="53" font-size="18">%</text>
-      <text x="96" y="52" font-size="18">已用 37%</text>
-      <rect x="0" y="66" width="296" height="12" fill="none" stroke="#11110f"/>
-      <rect x="2" y="68" width="108" height="8" fill="#11110f"/>
-      <text x="0" y="100" font-size="18">重置 2 小时</text>
-      <path d="M0 116H296" stroke="#11110f" stroke-width="2"/>
-      <text x="0" y="143" font-size="18">任务动态</text>
-      <circle cx="6" cy="170" r="5" fill="#11110f"/>
-      <text x="20" y="176" font-size="18">执行中</text>
-      <path d="M0 191H296" stroke="#aaa89f"/>
-      <circle cx="6" cy="215" r="5" fill="none" stroke="#11110f" stroke-width="2"/>
-      <text x="20" y="221" font-size="18">本轮完成</text>
+  <g transform="translate(56 78)">
+    <text x="0" y="0" dominant-baseline="hanging" fill="#11110f" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif" font-size="68" font-weight="800" letter-spacing="-2">CODEX</text>
+    <text x="0" y="70" dominant-baseline="hanging" fill="#11110f" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif" font-size="68" font-weight="800" letter-spacing="-2">DASHBOARD</text>
+    <text x="2" y="174" fill="#34332f" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif" font-size="26">把额度与任务动态，留在桌面的电子纸上。</text>
+    <g transform="translate(2 214)" fill="#64625c" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">
+      <circle cx="7" cy="-6" r="6" fill="#11110f"/>
+      <text x="24" y="0">READ ONLY</text>
+      <circle cx="166" cy="-6" r="6" fill="none" stroke="#11110f" stroke-width="2"/>
+      <text x="183" y="0">LOCAL RENDER</text>
     </g>
   </g>
-
-  <g transform="translate(786 346)" fill="#34332f" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">
-    <text x="0" y="0">QUOTA</text>
-    <text x="100" y="0">TASK ACTIVITY</text>
-    <text x="286" y="0">E-INK</text>
+  <g id="signal-path" transform="translate(650 94)">
+    <rect x="0" y="56" width="116" height="70" rx="8" fill="#fffef9" stroke="#11110f" stroke-width="2"/>
+    <text x="58" y="84" text-anchor="middle" fill="#11110f" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">CODEX</text>
+    <text x="58" y="108" text-anchor="middle" fill="#64625c" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">APP SERVER</text>
+    <path d="M126 91H166" stroke="#11110f" stroke-width="2"/>
+    <path d="M157 82L166 91L157 100" fill="none" stroke="#11110f" stroke-width="2"/>
+    <rect x="176" y="42" width="144" height="98" rx="8" fill="#11110f"/>
+    <text x="248" y="80" text-anchor="middle" fill="#fffef9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">COMPANION</text>
+    <text x="248" y="108" text-anchor="middle" fill="#c9c6bb" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">PNG · HASH</text>
+    <path d="M330 91H370" stroke="#11110f" stroke-width="2"/>
+    <path d="M361 82L370 91L361 100" fill="none" stroke="#11110f" stroke-width="2"/>
+    <g transform="translate(380 0)">
+      <rect width="158" height="182" rx="18" fill="#11110f"/>
+      <rect x="12" y="12" width="134" height="158" rx="4" fill="#fffef9"/>
+      <g transform="translate(25 28)" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif" fill="#11110f">
+        <text x="0" y="0" dominant-baseline="hanging" font-size="16">5 小时额度</text>
+        <text x="0" y="62" font-size="45" font-weight="700">63%</text>
+        <rect x="0" y="74" width="108" height="9" fill="none" stroke="#11110f"/>
+        <rect x="2" y="76" width="39" height="5" fill="#11110f"/>
+        <path d="M0 100H108" stroke="#11110f"/>
+        <circle cx="5" cy="121" r="5"/>
+        <text x="18" y="127" font-size="16">执行中</text>
+      </g>
+    </g>
+  </g>
+  <g transform="translate(56 358)" fill="#34332f" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">
+    <text x="0" y="0">MACOS COMPANION</text>
+    <text x="264" y="0">PRIVACY MODE</text>
+    <text x="492" y="0">CHANGE-ONLY PUSH</text>
+    <text x="932" y="0">ZECTRIX NOTE4</text>
   </g>
 </svg>
