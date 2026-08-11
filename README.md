@@ -4,13 +4,21 @@
 
 把 Codex 的额度、重置时间和最近任务动态放到一块安静常亮的 ZECTRIX NOTE4 上。macOS companion 在本地读取状态、渲染 400×300 黑白画面，只在内容变化时推送。
 
-## 你会看到什么
+## 实机效果
+
+<p align="center">
+  <img src="./assets/readme/device-photo.jpg" width="520" alt="ZECTRIX NOTE4 实机显示 Codex 剩余额度、重置时间和最近任务动态">
+</p>
+
+ZECTRIX NOTE4 上的实际运行效果。照片中的画面由 companion 读取当前 Codex 状态后生成并推送。
+
+### 原始看板输出
 
 <p align="center">
   <img src="./assets/readme/dashboard-preview.png" width="400" alt="NOTE4 示例画面，显示 Codex 剩余额度、重置时间和三条任务动态">
 </p>
 
-这张图由仓库内的固定 fixture 直接生成，没有使用设计稿代替真实输出。
+这张 400×300 图片由仓库内的固定 fixture 直接生成，没有使用设计稿代替真实输出。
 
 - Codex 配额剩余百分比、使用量、窗口时长和重置时间
 - 最多三条近期任务动态：`执行中`、`本轮完成`、`失败`或`已中断`
