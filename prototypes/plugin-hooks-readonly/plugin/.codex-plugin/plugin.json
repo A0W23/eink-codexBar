@@ -1,9 +1,0 @@
-{
-  "name": "zectrix-hooks-readonly",
-  "version": "0.0.0-prototype",
-  "description": "Disposable local-only hook recorder for the ZECTRIX Codex dashboard state experiment.",
-  "author": {
-    "name": "Local prototype"
-  },
-  "license": "UNLICENSED"
-}
