@@ -229,8 +229,24 @@ fn observe_activity(
         codex_home,
         installation_salt: CORRELATION_SALT.into(),
     });
-    let mut events = observer.observe()?;
-    events.extend(read_hook_events(&data_dir.join("hook-events.jsonl"))?);
+    let hook_path = data_dir.join("hook-events.jsonl");
+    let rollout_events = observer.observe();
+    let hook_events = read_hook_events(&hook_path);
+    let events = match (rollout_events, hook_events) {
+        (Ok(mut rollout), Ok(hooks)) => {
+            rollout.extend(hooks);
+            rollout
+        }
+        (Err(error), Ok(hooks)) => {
+            let snapshot = reduce_task_activity(metadata, hooks, now_epoch_seconds);
+            if snapshot.tasks.is_empty() {
+                return Err(Box::new(error));
+            }
+            return Ok(snapshot);
+        }
+        (Ok(rollout), Err(_)) => rollout,
+        (Err(error), _) => return Err(Box::new(error)),
+    };
     Ok(reduce_task_activity(metadata, events, now_epoch_seconds))
 }
 

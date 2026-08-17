@@ -4,7 +4,6 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use rusqlite::{Connection, OpenFlags};
 use serde::Deserialize;
 use serde::de::IgnoredAny;
 use thiserror::Error;
@@ -19,6 +18,8 @@ pub enum ActivitySourceError {
     UnsupportedTaskMetadata,
     #[error("Hook 生命周期枚举不受支持")]
     UnsupportedHook,
+    #[error("Rollout 生命周期格式不受支持")]
+    UnsupportedRollout,
     #[error("无法只读观察 Codex 本地状态")]
     ReadOnlyObservation,
 }
@@ -223,28 +224,24 @@ impl ReadonlyRolloutObserver {
     }
 
     pub fn observe(&self) -> Result<Vec<ActivityEvent>, ActivitySourceError> {
-        verify_state_database_readable(&self.config.codex_home)?;
         let mut paths = Vec::new();
         collect_rollouts(&self.config.codex_home.join("sessions"), &mut paths)?;
         let mut events = Vec::new();
+        let mut incompatible_rollouts = 0;
         for path in paths {
-            events.extend(parse_rollout(&path, &self.config.installation_salt)?);
+            match parse_rollout(&path, &self.config.installation_salt) {
+                Ok(rollout_events) => {
+                    events.extend(rollout_events);
+                }
+                Err(ActivitySourceError::UnsupportedRollout) => incompatible_rollouts += 1,
+                Err(error) => return Err(error),
+            }
+        }
+        if events.is_empty() && incompatible_rollouts > 0 {
+            return Err(ActivitySourceError::UnsupportedRollout);
         }
         Ok(events)
     }
-}
-
-fn verify_state_database_readable(codex_home: &Path) -> Result<(), ActivitySourceError> {
-    let database = codex_home.join("state_5.sqlite");
-    let uri = format!("file:{}?immutable=1", database.display());
-    let connection = Connection::open_with_flags(
-        uri,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
-    )
-    .map_err(|_| ActivitySourceError::ReadOnlyObservation)?;
-    connection
-        .query_row("select 1", [], |_| Ok(()))
-        .map_err(|_| ActivitySourceError::ReadOnlyObservation)
 }
 
 fn collect_rollouts(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(), ActivitySourceError> {
@@ -289,6 +286,7 @@ fn parse_rollout(
         BufReader::new(File::open(path).map_err(|_| ActivitySourceError::ReadOnlyObservation)?);
     let mut correlations = Vec::new();
     let mut events = Vec::new();
+    let mut incompatible_lifecycle = false;
     for line in reader.lines() {
         let line = line.map_err(|_| ActivitySourceError::ReadOnlyObservation)?;
         let Ok(envelope) = serde_json::from_str::<RolloutEnvelope>(&line) else {
@@ -347,9 +345,11 @@ fn parse_rollout(
             _ => envelope.payload.completed_at,
         };
         let Some(timestamp) = timestamp else {
+            incompatible_lifecycle = true;
             continue;
         };
         if correlations.is_empty() {
+            incompatible_lifecycle = true;
             continue;
         }
         events.extend(
@@ -362,6 +362,9 @@ fn parse_rollout(
                     observed_at_epoch_seconds: timestamp,
                 }),
         );
+    }
+    if events.is_empty() && incompatible_lifecycle {
+        return Err(ActivitySourceError::UnsupportedRollout);
     }
     Ok(events)
 }

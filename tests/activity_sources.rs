@@ -385,6 +385,58 @@ fn unknown_and_malformed_rollout_records_do_not_poison_verified_activity() {
 }
 
 #[test]
+fn a_known_lifecycle_with_an_incompatible_shape_is_not_an_available_empty_source() {
+    let temp = tempfile::tempdir().unwrap();
+    let sessions = temp.path().join("sessions");
+    fs::create_dir_all(&sessions).unwrap();
+    let connection = Connection::open(temp.path().join("state_5.sqlite")).unwrap();
+    connection
+        .execute("create table threads (id text)", [])
+        .unwrap();
+    drop(connection);
+    fs::write(
+        sessions.join("rollout-incompatible.jsonl"),
+        concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"task-1\"}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"newStartedAt\":1786329990}}\n"
+        ),
+    )
+    .unwrap();
+    let observer = ReadonlyRolloutObserver::new(ReadonlyObservationConfig {
+        codex_home: temp.path().to_owned(),
+        installation_salt: SALT.into(),
+    });
+
+    assert!(observer.observe().is_err());
+}
+
+#[test]
+fn metadata_only_rollout_does_not_mask_an_incompatible_known_lifecycle() {
+    let temp = tempfile::tempdir().unwrap();
+    let sessions = temp.path().join("sessions");
+    fs::create_dir_all(&sessions).unwrap();
+    fs::write(
+        sessions.join("rollout-metadata-only.jsonl"),
+        "{\"type\":\"session_meta\",\"payload\":{\"id\":\"idle-task\"}}\n",
+    )
+    .unwrap();
+    fs::write(
+        sessions.join("rollout-incompatible.jsonl"),
+        concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"active-task\"}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"newStartedAt\":1786329990}}\n"
+        ),
+    )
+    .unwrap();
+    let observer = ReadonlyRolloutObserver::new(ReadonlyObservationConfig {
+        codex_home: temp.path().to_owned(),
+        installation_salt: SALT.into(),
+    });
+
+    assert!(observer.observe().is_err());
+}
+
+#[test]
 fn missing_rollout_directory_is_an_unavailable_source_not_an_empty_activity_list() {
     let temp = tempfile::tempdir().unwrap();
     let connection = Connection::open(temp.path().join("state_5.sqlite")).unwrap();
@@ -398,6 +450,27 @@ fn missing_rollout_directory_is_an_unavailable_source_not_an_empty_activity_list
     });
 
     assert!(observer.observe().is_err());
+}
+
+#[test]
+fn verified_rollout_lifecycle_does_not_depend_on_an_unrelated_state_database() {
+    let temp = tempfile::tempdir().unwrap();
+    let sessions = temp.path().join("sessions");
+    fs::create_dir_all(&sessions).unwrap();
+    fs::write(
+        sessions.join("rollout-sanitized.jsonl"),
+        concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"task-1\"}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"started_at\":1786329990}}\n"
+        ),
+    )
+    .unwrap();
+    let observer = ReadonlyRolloutObserver::new(ReadonlyObservationConfig {
+        codex_home: temp.path().to_owned(),
+        installation_salt: SALT.into(),
+    });
+
+    assert_eq!(observer.observe().unwrap().len(), 1);
 }
 
 #[test]
@@ -433,7 +506,7 @@ fn supported_recent_rollouts_remain_available_beside_an_old_cli_rollout() {
 }
 
 #[test]
-fn rollout_observation_fails_closed_when_state_database_is_not_readable() {
+fn a_corrupted_unrelated_state_database_does_not_hide_verified_rollout_activity() {
     let temp = tempfile::tempdir().unwrap();
     let sessions = temp.path().join("sessions");
     fs::create_dir_all(&sessions).unwrap();
@@ -451,7 +524,7 @@ fn rollout_observation_fails_closed_when_state_database_is_not_readable() {
         installation_salt: SALT.into(),
     });
 
-    assert!(observer.observe().is_err());
+    assert_eq!(observer.observe().unwrap().len(), 1);
 }
 
 fn inventory(root: &std::path::Path) -> Vec<(String, u64, i64, i64)> {

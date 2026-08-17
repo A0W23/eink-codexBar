@@ -9,7 +9,6 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 libc = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "multipart", "rustls-tls"] }
 rpassword = "7"
-rusqlite = "0.32"
 security-framework = "3.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -20,5 +19,6 @@ embedded-graphics = "0.8"
 zeroize = "1"
 
 [dev-dependencies]
+rusqlite = "0.32"
 tempfile = "3"
 walkdir = "2"

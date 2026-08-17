@@ -8,9 +8,9 @@ use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use codex_zectrix_dashboard::{
-    ActivityState, DashboardConfig, ObservedDashboardState, ObservedQuota, ObservedQuotaWindow,
-    ObservedTask, TaskActivityAvailability, normalize_dashboard,
-    render_normalized_dashboard_with_sync,
+    ActivityEvent, ActivityEventKind, ActivityState, CorrelationKey, DashboardConfig,
+    ObservedDashboardState, ObservedQuota, ObservedQuotaWindow, ObservedTask,
+    TaskActivityAvailability, normalize_dashboard, render_normalized_dashboard_with_sync,
 };
 
 mod common;
@@ -134,6 +134,148 @@ fn companion_publishes_current_quota_with_a_compatibility_frame_instead_of_cache
     }
 }
 
+#[test]
+fn companion_keeps_verified_hook_activity_when_rollout_storage_is_unavailable() {
+    let temp = tempfile::tempdir().unwrap();
+    let data_dir = temp.path().join("data");
+    fs::create_dir_all(&data_dir).unwrap();
+    fs::write(
+        data_dir.join("settings.json"),
+        r#"{"deviceId":"SECRET_DEVICE_ID","pageId":3,"privacyMode":false}"#,
+    )
+    .unwrap();
+    let now = current_epoch_seconds();
+    let hook = ActivityEvent {
+        correlation: CorrelationKey::derive("session-1", "codex-zectrix-dashboard-v1"),
+        kind: ActivityEventKind::UserSubmission,
+        observed_at_epoch_seconds: now - now.rem_euclid(60),
+    };
+    fs::write(
+        data_dir.join("hook-events.jsonl"),
+        format!("{}\n", serde_json::to_string(&hook).unwrap()),
+    )
+    .unwrap();
+
+    let secret = "SECRET_API_KEY";
+    let (base_url, request) = fake_zectrix_service(secret);
+    let output = Command::new(common::dashboard_binary())
+        .arg("companion")
+        .env(
+            "CODEX_HOME",
+            temp.path().join("codex-home-without-rollouts"),
+        )
+        .env("CODEX_ZECTRIX_API_BASE", base_url)
+        .env("CODEX_ZECTRIX_DATA_DIR", &data_dir)
+        .env(
+            "CODEX_ZECTRIX_CODEX_BIN",
+            fake_codex_with_task_command(temp.path()),
+        )
+        .env(
+            "CODEX_ZECTRIX_SECURITY_BIN",
+            fake_security_command(temp.path()),
+        )
+        .env("TEST_KEYCHAIN_SECRET", secret)
+        .env("TEST_CODEX_LOG", temp.path().join("codex.log"))
+        .env("CODEX_ZECTRIX_MAX_CYCLES", "1")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let request = request.recv().unwrap();
+    let png = extract_png(&request.1);
+    let source_status: serde_json::Value =
+        serde_json::from_slice(&fs::read(data_dir.join("source-status.json")).unwrap()).unwrap();
+    assert_eq!(source_status["quota"], "current");
+    assert_eq!(source_status["taskActivity"], "inferred");
+
+    let expected = ObservedDashboardState {
+        quota: ObservedQuota {
+            windows: vec![ObservedQuotaWindow {
+                name: "5 小时".into(),
+                used_percent: 37,
+                resets_at_epoch_seconds: 4_102_444_800,
+            }],
+            reset_credits: 0,
+            stale: false,
+        },
+        task_activity_availability: TaskActivityAvailability::Available,
+        task_activity_stale: false,
+        tasks: vec![ObservedTask::new(
+            "HOOK_TASK",
+            ActivityState::Running,
+            now - now.rem_euclid(60),
+        )],
+        prompt: None,
+        response: None,
+        reasoning: None,
+        project_path: None,
+        tool: None,
+        error_text: None,
+        plan: None,
+    };
+    let normalized = normalize_dashboard(expected, now, &DashboardConfig::default());
+    assert!(
+        render_normalized_dashboard_with_sync(
+            normalized,
+            now,
+            DashboardConfig::default(),
+            Some(now),
+        )
+        .unwrap()
+        .frame
+        .png_bytes()
+        .is_ok_and(|bytes| bytes == png)
+    );
+}
+
+#[test]
+fn companion_does_not_treat_an_empty_hook_file_as_verified_activity() {
+    let temp = tempfile::tempdir().unwrap();
+    let data_dir = temp.path().join("data");
+    fs::create_dir_all(&data_dir).unwrap();
+    fs::write(
+        data_dir.join("settings.json"),
+        r#"{"deviceId":"SECRET_DEVICE_ID","pageId":3,"privacyMode":false}"#,
+    )
+    .unwrap();
+    fs::write(data_dir.join("hook-events.jsonl"), []).unwrap();
+
+    let secret = "SECRET_API_KEY";
+    let (base_url, request) = fake_zectrix_service(secret);
+    let output = Command::new(common::dashboard_binary())
+        .arg("companion")
+        .env(
+            "CODEX_HOME",
+            temp.path().join("codex-home-without-rollouts"),
+        )
+        .env("CODEX_ZECTRIX_API_BASE", base_url)
+        .env("CODEX_ZECTRIX_DATA_DIR", &data_dir)
+        .env(
+            "CODEX_ZECTRIX_CODEX_BIN",
+            fake_codex_with_task_command(temp.path()),
+        )
+        .env(
+            "CODEX_ZECTRIX_SECURITY_BIN",
+            fake_security_command(temp.path()),
+        )
+        .env("TEST_KEYCHAIN_SECRET", secret)
+        .env("TEST_CODEX_LOG", temp.path().join("codex.log"))
+        .env("CODEX_ZECTRIX_MAX_CYCLES", "1")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    request.recv().unwrap();
+    let source_status: serde_json::Value =
+        serde_json::from_slice(&fs::read(data_dir.join("source-status.json")).unwrap()).unwrap();
+    assert_eq!(source_status["quota"], "current");
+    assert_eq!(source_status["taskActivity"], "unavailable");
+}
+
 fn current_epoch_seconds() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -192,6 +334,32 @@ printf '%s\n' "$request" >> "$TEST_CODEX_LOG"
 case "$request" in
   *account/rateLimits/read*) printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":37,"windowDurationMins":300,"resetsAt":4102444800},"secondary":null},"rateLimitResetCredits":{"availableCount":0}}}' ;;
   *) printf '%s\n' '{"id":2,"error":{"code":-1,"message":"SECRET_PROMPT SECRET_PATH"}}' ;;
+esac
+"#,
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&path, permissions).unwrap();
+    path
+}
+
+fn fake_codex_with_task_command(temp: &std::path::Path) -> std::path::PathBuf {
+    let path = temp.join("codex-with-task");
+    fs::write(
+        &path,
+        r#"#!/bin/sh
+read -r initialize
+printf '%s\n' "$initialize" >> "$TEST_CODEX_LOG"
+printf '%s\n' '{"id":1,"result":{"userAgent":"codex-zectrix-dashboard/future (test)","platformFamily":"unix","platformOs":"macos","codexHome":"/tmp/codex"}}'
+read -r initialized
+printf '%s\n' "$initialized" >> "$TEST_CODEX_LOG"
+read -r request
+printf '%s\n' "$request" >> "$TEST_CODEX_LOG"
+case "$request" in
+  *account/rateLimits/read*) printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":37,"windowDurationMins":300,"resetsAt":4102444800},"secondary":null},"rateLimitResetCredits":{"availableCount":0}}}' ;;
+  *thread/list*) printf '%s\n' '{"id":2,"result":{"data":[{"id":"task-1","sessionId":"session-1","name":"HOOK_TASK","parentThreadId":null,"source":"appServer"}],"nextCursor":null}}' ;;
+  *) printf '%s\n' '{"id":2,"error":{"code":-1,"message":"unsupported"}}' ;;
 esac
 "#,
     )
