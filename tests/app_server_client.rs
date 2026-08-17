@@ -60,27 +60,32 @@ fn unavailable_app_server_returns_an_error_without_synthesizing_quota() {
 }
 
 #[test]
-fn unsupported_app_server_version_fails_closed_before_a_data_request() {
+fn harmless_app_server_version_change_keeps_recognized_quota_available() {
     let temp = tempfile::tempdir().unwrap();
     let server = temp.path().join("fake-codex");
-    fs::write(
-        &server,
+    let fixture = format!(
+        "{}/fixtures/app-server-0.148-additive.jsonl",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let script = format!(
         r#"#!/bin/sh
 read -r initialize
-printf '%s\n' '{"id":1,"result":{"userAgent":"codex-zectrix-dashboard/9.0.0 (future)"}}'
+sed -n '1p' '{}'
 read -r initialized
 read -r request
-[ -z "$request" ]
+sed -n '2p' '{}'
 "#,
-    )
-    .unwrap();
+        fixture, fixture
+    );
+    fs::write(&server, script).unwrap();
     let mut permissions = fs::metadata(&server).unwrap().permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(&server, permissions).unwrap();
 
-    let error = AppServerClient::new(&server).read_quota().unwrap_err();
+    let quota = AppServerClient::new(&server).read_quota().unwrap();
 
-    assert!(error.to_string().contains("版本不受支持"));
+    assert_eq!(quota.windows.len(), 1);
+    assert_eq!(quota.windows[0].used_percent, 37);
 }
 
 #[test]

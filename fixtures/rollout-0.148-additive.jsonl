@@ -1,0 +1,11 @@
+{malformed SECRET_MALFORMED}
+{"type":"event_msg","payload":{"type":"task_started","started_at":1786329980}}
+{"type":"future_envelope","payload":{"content":"SECRET_UNKNOWN"}}
+{"type":"session_meta","payload":{"cli_version":"0.148.0-alpha.9"}}
+{"type":"session_meta","payload":{"id":"task-1","cli_version":"0.148.0-alpha.9","additive":true}}
+{"type":"event_msg","payload":{"type":"future_event","completed_at":1786329981}}
+{"type":"event_msg","payload":{"type":"task_started"}}
+{"type":"event_msg","payload":{"type":"task_started","started_at":1786329990,"additive":true}}
+{"type":"event_msg","payload":{"type":"turn_aborted","reason":"future_reason","completed_at":1786329991}}
+{"type":"event_msg","payload":{"type":"task_complete"}}
+{"type":"event_msg","payload":{"type":"task_complete","completed_at":1786329992,"additive":true}}

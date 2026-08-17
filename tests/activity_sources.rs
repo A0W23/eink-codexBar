@@ -8,8 +8,7 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use codex_zectrix_dashboard::{
     ActivityEventKind, CorrelationKey, ReadonlyObservationConfig, ReadonlyRolloutObserver,
-    compute_state_schema_fingerprint, parse_app_server_tasks, parse_hook_event, persist_hook_event,
-    read_hook_events,
+    parse_app_server_tasks, parse_hook_event, persist_hook_event, read_hook_events,
 };
 use rusqlite::Connection;
 
@@ -55,8 +54,29 @@ fn official_thread_metadata_keeps_only_named_top_level_task_identity() {
 }
 
 #[test]
-fn official_thread_metadata_fails_closed_for_an_unknown_source_enum() {
-    let response = r#"{"data":[{"id":"task-1","sessionId":"session-1","name":"任务","parentThreadId":null,"source":"futureSource"}]}"#;
+fn official_thread_metadata_skips_unknown_records_without_poisoning_known_tasks() {
+    let response = r#"{
+      "data": [
+        {"id":"known","sessionId":"session-1","name":"已识别任务","parentThreadId":null,"source":"appServer"},
+        {"id":"unknown","sessionId":"session-2","name":"未知任务","parentThreadId":null,"source":"futureSource"}
+      ],
+      "nextCursor": null
+    }"#;
+
+    let tasks = parse_app_server_tasks(response, SALT).unwrap();
+
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].title, "已识别任务");
+}
+
+#[test]
+fn official_thread_metadata_reports_an_entirely_unrecognized_page_as_unavailable() {
+    let response = r#"{
+      "data": [
+        {"id":"unknown","sessionId":"session-1","name":"未知任务","parentThreadId":null,"source":"futureSource"}
+      ],
+      "nextCursor": null
+    }"#;
 
     assert!(parse_app_server_tasks(response, SALT).is_err());
 }
@@ -241,12 +261,9 @@ fn rollout_observation_reads_minimal_lifecycle_envelopes_without_modifying_codex
         .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(1_600_000_000)))
         .unwrap();
     let before = inventory(temp.path());
-    let fingerprint = compute_state_schema_fingerprint(temp.path()).unwrap();
     let observer = ReadonlyRolloutObserver::new(ReadonlyObservationConfig {
         codex_home: temp.path().to_owned(),
         installation_salt: SALT.into(),
-        supported_cli_version: "0.147.0-alpha.6.5".into(),
-        supported_schema_sha256: fingerprint,
     });
 
     let events = observer.observe().unwrap();
@@ -286,6 +303,88 @@ fn rollout_observation_reads_minimal_lifecycle_envelopes_without_modifying_codex
 }
 
 #[test]
+fn additive_schema_and_cli_changes_preserve_recognized_activity_without_writes() {
+    let temp = tempfile::tempdir().unwrap();
+    let sessions = temp.path().join("sessions");
+    fs::create_dir_all(&sessions).unwrap();
+    let database = temp.path().join("state_5.sqlite");
+    let connection = Connection::open(&database).unwrap();
+    connection
+        .execute("create table threads (id text primary key)", [])
+        .unwrap();
+    drop(connection);
+    let connection = Connection::open(&database).unwrap();
+    connection
+        .execute("alter table threads add column additive text", [])
+        .unwrap();
+    connection
+        .execute("create table additive_table (value text)", [])
+        .unwrap();
+    drop(connection);
+    fs::write(
+        sessions.join("rollout-current.jsonl"),
+        concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"task-1\",\"cli_version\":\"0.148.0-alpha.9\",\"additive\":true}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"started_at\":1786329990,\"additive\":true}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"completed_at\":1786329991,\"additive\":true}}\n"
+        ),
+    )
+    .unwrap();
+    let before = inventory(temp.path());
+    let observer = ReadonlyRolloutObserver::new(ReadonlyObservationConfig {
+        codex_home: temp.path().to_owned(),
+        installation_salt: SALT.into(),
+    });
+
+    let events = observer.observe().unwrap();
+
+    assert_eq!(
+        events.iter().map(|event| event.kind).collect::<Vec<_>>(),
+        vec![
+            ActivityEventKind::RolloutStarted,
+            ActivityEventKind::TurnStopped,
+        ]
+    );
+    assert_eq!(before, inventory(temp.path()));
+}
+
+#[test]
+fn unknown_and_malformed_rollout_records_do_not_poison_verified_activity() {
+    let temp = tempfile::tempdir().unwrap();
+    let sessions = temp.path().join("sessions");
+    fs::create_dir_all(&sessions).unwrap();
+    let connection = Connection::open(temp.path().join("state_5.sqlite")).unwrap();
+    connection
+        .execute("create table threads (id text)", [])
+        .unwrap();
+    drop(connection);
+    fs::write(
+        sessions.join("rollout-additive.jsonl"),
+        include_bytes!("../fixtures/rollout-0.148-additive.jsonl"),
+    )
+    .unwrap();
+    let observer = ReadonlyRolloutObserver::new(ReadonlyObservationConfig {
+        codex_home: temp.path().to_owned(),
+        installation_salt: SALT.into(),
+    });
+
+    let events = observer.observe().unwrap();
+
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| (event.kind, event.observed_at_epoch_seconds))
+            .collect::<Vec<_>>(),
+        vec![
+            (ActivityEventKind::RolloutStarted, 1_786_329_990),
+            (ActivityEventKind::TurnStopped, 1_786_329_992),
+        ]
+    );
+    let diagnostic = format!("{events:?}");
+    assert!(!diagnostic.contains("SECRET_"));
+}
+
+#[test]
 fn missing_rollout_directory_is_an_unavailable_source_not_an_empty_activity_list() {
     let temp = tempfile::tempdir().unwrap();
     let connection = Connection::open(temp.path().join("state_5.sqlite")).unwrap();
@@ -296,8 +395,6 @@ fn missing_rollout_directory_is_an_unavailable_source_not_an_empty_activity_list
     let observer = ReadonlyRolloutObserver::new(ReadonlyObservationConfig {
         codex_home: temp.path().to_owned(),
         installation_salt: SALT.into(),
-        supported_cli_version: "0.147.0-alpha.6.5".into(),
-        supported_schema_sha256: compute_state_schema_fingerprint(temp.path()).unwrap(),
     });
 
     assert!(observer.observe().is_err());
@@ -330,113 +427,31 @@ fn supported_recent_rollouts_remain_available_beside_an_old_cli_rollout() {
     let observer = ReadonlyRolloutObserver::new(ReadonlyObservationConfig {
         codex_home: temp.path().to_owned(),
         installation_salt: SALT.into(),
-        supported_cli_version: "0.147.0-alpha.6.5".into(),
-        supported_schema_sha256: compute_state_schema_fingerprint(temp.path()).unwrap(),
     });
 
     assert_eq!(observer.observe().unwrap().len(), 2);
 }
 
 #[test]
-fn rollout_observation_fails_closed_for_version_schema_or_lifecycle_drift() {
+fn rollout_observation_fails_closed_when_state_database_is_not_readable() {
     let temp = tempfile::tempdir().unwrap();
     let sessions = temp.path().join("sessions");
     fs::create_dir_all(&sessions).unwrap();
-    let connection = Connection::open(temp.path().join("state_5.sqlite")).unwrap();
-    connection
-        .execute("create table threads (id text)", [])
-        .unwrap();
-    drop(connection);
-    let fingerprint = compute_state_schema_fingerprint(temp.path()).unwrap();
-    let rollout = sessions.join("rollout-sanitized.jsonl");
     fs::write(
-        &rollout,
-        "{\"type\":\"session_meta\",\"payload\":{\"id\":\"different-thread-id\",\"session_id\":\"task-1\",\"cli_version\":\"future\"}}\n",
-    )
-    .unwrap();
-    let config = ReadonlyObservationConfig {
-        codex_home: temp.path().to_owned(),
-        installation_salt: SALT.into(),
-        supported_cli_version: "0.147.0-alpha.6.5".into(),
-        supported_schema_sha256: fingerprint.clone(),
-    };
-    assert!(ReadonlyRolloutObserver::new(config).observe().is_err());
-
-    fs::write(
-        &rollout,
+        sessions.join("rollout-sanitized.jsonl"),
         concat!(
-            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"different-thread-id\",\"session_id\":\"task-1\",\"cli_version\":\"0.147.0-alpha.6.5\"}}\n",
-            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"turn_finished_in_a_new_way\",\"completed_at\":1786329990}}\n"
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"task-1\"}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"started_at\":1786329990}}\n"
         ),
     )
     .unwrap();
-    let unknown_lifecycle = ReadonlyObservationConfig {
+    fs::write(temp.path().join("state_5.sqlite"), b"not a database").unwrap();
+    let observer = ReadonlyRolloutObserver::new(ReadonlyObservationConfig {
         codex_home: temp.path().to_owned(),
         installation_salt: SALT.into(),
-        supported_cli_version: "0.147.0-alpha.6.5".into(),
-        supported_schema_sha256: fingerprint,
-    };
-    assert!(
-        ReadonlyRolloutObserver::new(unknown_lifecycle)
-            .observe()
-            .is_err()
-    );
+    });
 
-    fs::write(
-        &rollout,
-        concat!(
-            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"different-thread-id\",\"session_id\":\"task-1\",\"cli_version\":\"0.147.0-alpha.6.5\"}}\n",
-            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"execution_started\",\"started_at\":1786329990}}\n"
-        ),
-    )
-    .unwrap();
-    let unknown_enum = ReadonlyObservationConfig {
-        codex_home: temp.path().to_owned(),
-        installation_salt: SALT.into(),
-        supported_cli_version: "0.147.0-alpha.6.5".into(),
-        supported_schema_sha256: compute_state_schema_fingerprint(temp.path()).unwrap(),
-    };
-    assert!(
-        ReadonlyRolloutObserver::new(unknown_enum)
-            .observe()
-            .is_err()
-    );
-
-    for abort in [
-        "{\"type\":\"event_msg\",\"payload\":{\"type\":\"turn_aborted\",\"completed_at\":1786329990}}",
-        "{\"type\":\"event_msg\",\"payload\":{\"type\":\"turn_aborted\",\"reason\":\"future_reason\",\"completed_at\":1786329990}}",
-    ] {
-        fs::write(
-            &rollout,
-            format!(
-                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"different-thread-id\",\"session_id\":\"task-1\",\"cli_version\":\"0.147.0-alpha.6.5\"}}}}\n{abort}\n"
-            ),
-        )
-        .unwrap();
-        let unsupported_abort = ReadonlyObservationConfig {
-            codex_home: temp.path().to_owned(),
-            installation_salt: SALT.into(),
-            supported_cli_version: "0.147.0-alpha.6.5".into(),
-            supported_schema_sha256: compute_state_schema_fingerprint(temp.path()).unwrap(),
-        };
-        assert!(
-            ReadonlyRolloutObserver::new(unsupported_abort)
-                .observe()
-                .is_err()
-        );
-    }
-
-    let wrong_schema = ReadonlyObservationConfig {
-        codex_home: temp.path().to_owned(),
-        installation_salt: SALT.into(),
-        supported_cli_version: "0.147.0-alpha.6.5".into(),
-        supported_schema_sha256: "wrong".into(),
-    };
-    assert!(
-        ReadonlyRolloutObserver::new(wrong_schema)
-            .observe()
-            .is_err()
-    );
+    assert!(observer.observe().is_err());
 }
 
 fn inventory(root: &std::path::Path) -> Vec<(String, u64, i64, i64)> {

@@ -1,0 +1,2 @@
+{"id":1,"result":{"userAgent":"codex-zectrix-dashboard/0.148.0-alpha.9 (future)","platformFamily":"unix","additiveCapability":true}}
+{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":37,"windowDurationMins":300,"resetsAt":1786337200},"secondary":null},"additiveField":true}}

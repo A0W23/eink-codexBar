@@ -16,9 +16,6 @@ use codex_zectrix_dashboard::{
 mod setup;
 
 const CORRELATION_SALT: &str = "codex-zectrix-dashboard-v1";
-const SUPPORTED_CLI_VERSION: &str = "0.147.0-alpha.6.5";
-const SUPPORTED_SCHEMA_SHA256: &str =
-    "cb29555a6be238d57dc4a1a8171f1107aa7b5bb0e9fb97a33c0ca112f3d37452";
 
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -231,8 +228,6 @@ fn observe_activity(
     let observer = ReadonlyRolloutObserver::new(ReadonlyObservationConfig {
         codex_home,
         installation_salt: CORRELATION_SALT.into(),
-        supported_cli_version: SUPPORTED_CLI_VERSION.into(),
-        supported_schema_sha256: SUPPORTED_SCHEMA_SHA256.into(),
     });
     let mut events = observer.observe()?;
     events.extend(read_hook_events(&data_dir.join("hook-events.jsonl"))?);

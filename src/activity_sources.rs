@@ -7,7 +7,6 @@ use std::time::Duration;
 use rusqlite::{Connection, OpenFlags};
 use serde::Deserialize;
 use serde::de::IgnoredAny;
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::{ActivityEvent, ActivityEventKind, CorrelationKey, OfficialTaskMetadata};
@@ -20,12 +19,6 @@ pub enum ActivitySourceError {
     UnsupportedTaskMetadata,
     #[error("Hook 生命周期枚举不受支持")]
     UnsupportedHook,
-    #[error("Rollout 生命周期格式不受支持")]
-    UnsupportedRollout,
-    #[error("Codex 版本不受支持")]
-    UnsupportedVersion,
-    #[error("Codex 本地 schema 不受支持")]
-    UnsupportedSchema,
     #[error("无法只读观察 Codex 本地状态")]
     ReadOnlyObservation,
 }
@@ -33,7 +26,7 @@ pub enum ActivitySourceError {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ThreadListResponse {
-    data: Vec<ThreadMetadata>,
+    data: Vec<serde_json::Value>,
     next_cursor: Option<String>,
 }
 
@@ -113,8 +106,16 @@ pub(crate) fn parse_app_server_task_page(
 ) -> Result<TaskMetadataPage, ActivitySourceError> {
     let response: ThreadListResponse =
         serde_json::from_str(response).map_err(|_| ActivitySourceError::UnsupportedTaskMetadata)?;
-    let tasks = response
+    let page_had_records = !response.data.is_empty();
+    let recognized: Vec<ThreadMetadata> = response
         .data
+        .into_iter()
+        .filter_map(|task| serde_json::from_value::<ThreadMetadata>(task).ok())
+        .collect();
+    if page_had_records && recognized.is_empty() {
+        return Err(ActivitySourceError::UnsupportedTaskMetadata);
+    }
+    let tasks = recognized
         .into_iter()
         .filter_map(|task| {
             let title = task.name.filter(|title| !title.trim().is_empty())?;
@@ -210,8 +211,6 @@ pub fn read_hook_events(path: &Path) -> Result<Vec<ActivityEvent>, ActivitySourc
 pub struct ReadonlyObservationConfig {
     pub codex_home: PathBuf,
     pub installation_salt: String,
-    pub supported_cli_version: String,
-    pub supported_schema_sha256: String,
 }
 
 pub struct ReadonlyRolloutObserver {
@@ -224,37 +223,18 @@ impl ReadonlyRolloutObserver {
     }
 
     pub fn observe(&self) -> Result<Vec<ActivityEvent>, ActivitySourceError> {
-        let fingerprint = compute_state_schema_fingerprint(&self.config.codex_home)?;
-        if fingerprint != self.config.supported_schema_sha256 {
-            return Err(ActivitySourceError::UnsupportedSchema);
-        }
+        verify_state_database_readable(&self.config.codex_home)?;
         let mut paths = Vec::new();
         collect_rollouts(&self.config.codex_home.join("sessions"), &mut paths)?;
         let mut events = Vec::new();
-        let mut supported_rollouts = 0;
-        let mut unsupported_versions = 0;
         for path in paths {
-            match parse_rollout(
-                &path,
-                &self.config.installation_salt,
-                &self.config.supported_cli_version,
-            ) {
-                Ok(rollout_events) => {
-                    supported_rollouts += 1;
-                    events.extend(rollout_events);
-                }
-                Err(ActivitySourceError::UnsupportedVersion) => unsupported_versions += 1,
-                Err(error) => return Err(error),
-            }
-        }
-        if supported_rollouts == 0 && unsupported_versions > 0 {
-            return Err(ActivitySourceError::UnsupportedVersion);
+            events.extend(parse_rollout(&path, &self.config.installation_salt)?);
         }
         Ok(events)
     }
 }
 
-pub fn compute_state_schema_fingerprint(codex_home: &Path) -> Result<String, ActivitySourceError> {
+fn verify_state_database_readable(codex_home: &Path) -> Result<(), ActivitySourceError> {
     let database = codex_home.join("state_5.sqlite");
     let uri = format!("file:{}?immutable=1", database.display());
     let connection = Connection::open_with_flags(
@@ -262,31 +242,9 @@ pub fn compute_state_schema_fingerprint(codex_home: &Path) -> Result<String, Act
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
     )
     .map_err(|_| ActivitySourceError::ReadOnlyObservation)?;
-    let mut statement = connection
-        .prepare("select name from sqlite_schema where type='table' order by name")
-        .map_err(|_| ActivitySourceError::ReadOnlyObservation)?;
-    let table_names: Vec<String> = statement
-        .query_map([], |row| row.get(0))
-        .map_err(|_| ActivitySourceError::ReadOnlyObservation)?
-        .collect::<Result<_, _>>()
-        .map_err(|_| ActivitySourceError::ReadOnlyObservation)?;
-    drop(statement);
-    let mut tables = Vec::new();
-    for table in table_names {
-        let quoted = table.replace('"', "\"\"");
-        let mut statement = connection
-            .prepare(&format!("pragma table_info(\"{quoted}\")"))
-            .map_err(|_| ActivitySourceError::ReadOnlyObservation)?;
-        let columns: Vec<String> = statement
-            .query_map([], |row| row.get(1))
-            .map_err(|_| ActivitySourceError::ReadOnlyObservation)?
-            .collect::<Result<_, _>>()
-            .map_err(|_| ActivitySourceError::ReadOnlyObservation)?;
-        tables.push((table, columns));
-    }
-    let encoded =
-        serde_json::to_vec(&tables).map_err(|_| ActivitySourceError::ReadOnlyObservation)?;
-    Ok(format!("{:x}", Sha256::digest(encoded)))
+    connection
+        .query_row("select 1", [], |_| Ok(()))
+        .map_err(|_| ActivitySourceError::ReadOnlyObservation)
 }
 
 fn collect_rollouts(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(), ActivitySourceError> {
@@ -326,7 +284,6 @@ fn collect_rollouts(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(), Ac
 fn parse_rollout(
     path: &Path,
     installation_salt: &str,
-    supported_cli_version: &str,
 ) -> Result<Vec<ActivityEvent>, ActivitySourceError> {
     let reader =
         BufReader::new(File::open(path).map_err(|_| ActivitySourceError::ReadOnlyObservation)?);
@@ -334,23 +291,13 @@ fn parse_rollout(
     let mut events = Vec::new();
     for line in reader.lines() {
         let line = line.map_err(|_| ActivitySourceError::ReadOnlyObservation)?;
-        let envelope: RolloutEnvelope =
-            serde_json::from_str(&line).map_err(|_| ActivitySourceError::UnsupportedRollout)?;
+        let Ok(envelope) = serde_json::from_str::<RolloutEnvelope>(&line) else {
+            continue;
+        };
         if envelope.envelope_type == "session_meta" {
-            let cli_version = envelope
-                .payload
-                .cli_version
-                .as_deref()
-                .ok_or(ActivitySourceError::UnsupportedRollout)?;
-            if cli_version != supported_cli_version {
-                return Err(ActivitySourceError::UnsupportedVersion);
-            }
-            let thread_id = envelope
-                .payload
-                .id
-                .as_deref()
-                .filter(|id| !id.is_empty())
-                .ok_or(ActivitySourceError::UnsupportedRollout)?;
+            let Some(thread_id) = envelope.payload.id.as_deref().filter(|id| !id.is_empty()) else {
+                continue;
+            };
             correlations.push(CorrelationKey::derive(thread_id, installation_salt));
             if let Some(session_id) = envelope
                 .payload
@@ -363,20 +310,10 @@ fn parse_rollout(
             continue;
         }
         if envelope.envelope_type != "event_msg" {
-            if matches!(
-                envelope.envelope_type.as_str(),
-                "response_item"
-                    | "world_state"
-                    | "turn_context"
-                    | "inter_agent_communication_metadata"
-                    | "compacted"
-            ) {
-                continue;
-            }
-            return Err(ActivitySourceError::UnsupportedRollout);
+            continue;
         }
         let Some(payload_type) = envelope.payload.payload_type.as_deref() else {
-            return Err(ActivitySourceError::UnsupportedRollout);
+            continue;
         };
         let kind = match payload_type {
             "task_started" => Some(ActivityEventKind::RolloutStarted),
@@ -384,12 +321,10 @@ fn parse_rollout(
                 Some(ActivityEventKind::TurnFailed)
             }
             "task_complete" => Some(ActivityEventKind::TurnStopped),
-            "turn_aborted"
-                if envelope.payload.abort_reason == Some(RolloutAbortReason::Interrupted) =>
-            {
+            "turn_aborted" if envelope.payload.abort_reason.as_deref() == Some("interrupted") => {
                 Some(ActivityEventKind::TurnInterrupted)
             }
-            "turn_aborted" => return Err(ActivitySourceError::UnsupportedRollout),
+            "turn_aborted" => None,
             "agent_message"
             | "agent_reasoning"
             | "context_compacted"
@@ -402,21 +337,20 @@ fn parse_rollout(
             | "token_count"
             | "user_message"
             | "web_search_end" => None,
-            _ => return Err(ActivitySourceError::UnsupportedRollout),
+            _ => None,
         };
         let Some(kind) = kind else {
             continue;
         };
         let timestamp = match kind {
             ActivityEventKind::RolloutStarted => envelope.payload.started_at,
-            _ => envelope
-                .payload
-                .completed_at
-                .or(envelope.payload.started_at),
-        }
-        .ok_or(ActivitySourceError::UnsupportedRollout)?;
+            _ => envelope.payload.completed_at,
+        };
+        let Some(timestamp) = timestamp else {
+            continue;
+        };
         if correlations.is_empty() {
-            return Err(ActivitySourceError::UnsupportedRollout);
+            continue;
         }
         events.extend(
             correlations
@@ -428,9 +362,6 @@ fn parse_rollout(
                     observed_at_epoch_seconds: timestamp,
                 }),
         );
-    }
-    if correlations.is_empty() {
-        return Err(ActivitySourceError::UnsupportedRollout);
     }
     Ok(events)
 }
@@ -448,16 +379,9 @@ struct RolloutPayload {
     payload_type: Option<String>,
     id: Option<String>,
     session_id: Option<String>,
-    cli_version: Option<String>,
     started_at: Option<i64>,
     completed_at: Option<i64>,
     error: Option<IgnoredAny>,
     #[serde(rename = "reason")]
-    abort_reason: Option<RolloutAbortReason>,
-}
-
-#[derive(Clone, Copy, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
-enum RolloutAbortReason {
-    Interrupted,
+    abort_reason: Option<String>,
 }
