@@ -6,7 +6,8 @@ use std::thread;
 use codex_zectrix_dashboard::{
     ActivityState, DashboardConfig, DashboardOutput, FramePublisher, ObservedDashboardState,
     ObservedQuota, ObservedQuotaWindow, ObservedTask, PublishAttempt, PublishCoordinator,
-    PublisherState, ZectrixPublisher, normalize_dashboard, render_normalized_dashboard_with_sync,
+    PublisherState, TaskActivityAvailability, ZectrixPublisher, normalize_dashboard,
+    render_normalized_dashboard_with_sync,
 };
 
 fn observed(title: &str, state: ActivityState) -> ObservedDashboardState {
@@ -20,6 +21,7 @@ fn observed(title: &str, state: ActivityState) -> ObservedDashboardState {
             reset_credits: 0,
             stale: false,
         },
+        task_activity_availability: TaskActivityAvailability::Available,
         task_activity_stale: false,
         tasks: vec![ObservedTask::new(title, state, 1_000)],
         prompt: None,
@@ -110,6 +112,67 @@ fn visible_changes_coalesce_and_retries_keep_the_newest_state_behind_the_interva
     assert_eq!(
         coordinator.state().last_successful_sync_epoch_seconds,
         Some(120)
+    );
+}
+
+#[test]
+fn partial_availability_preserves_quota_change_detection_throttling_deduplication_and_recovery() {
+    let mut coordinator =
+        PublishCoordinator::new(DashboardConfig::default(), PublisherState::default());
+    let mut publisher = RecordingPublisher::default();
+    let mut available_empty = observed("不应出现", ActivityState::Running);
+    available_empty.tasks.clear();
+
+    assert!(coordinator.observe(available_empty.clone(), 0));
+    assert_eq!(
+        coordinator.try_publish(0, &mut publisher).unwrap(),
+        PublishAttempt::Published
+    );
+
+    let mut unavailable = observed("旧任务", ActivityState::Failed);
+    unavailable.task_activity_availability = TaskActivityAvailability::Unavailable;
+    assert!(coordinator.observe(unavailable.clone(), 10));
+    assert_eq!(
+        coordinator.try_publish(10, &mut publisher).unwrap(),
+        PublishAttempt::Deferred {
+            until_epoch_seconds: 60
+        }
+    );
+    assert_eq!(
+        coordinator.try_publish(60, &mut publisher).unwrap(),
+        PublishAttempt::Published
+    );
+    assert!(!coordinator.observe(unavailable.clone(), 61));
+
+    unavailable.quota.windows[0].used_percent = 38;
+    assert!(coordinator.observe(unavailable, 61));
+    assert_eq!(
+        coordinator.try_publish(61, &mut publisher).unwrap(),
+        PublishAttempt::Deferred {
+            until_epoch_seconds: 120
+        }
+    );
+    assert_eq!(
+        coordinator.try_publish(120, &mut publisher).unwrap(),
+        PublishAttempt::Published
+    );
+
+    let recovered = observed("已验证任务", ActivityState::Running);
+    assert!(coordinator.observe(recovered, 121));
+    assert_eq!(
+        coordinator.try_publish(180, &mut publisher).unwrap(),
+        PublishAttempt::Published
+    );
+
+    let compatibility = &publisher.visible_text[1];
+    assert!(compatibility.iter().any(|text| text == "状态暂不可用"));
+    assert!(compatibility.iter().any(|text| text == "请检查插件兼容性"));
+    assert!(!compatibility.iter().any(|text| text == "旧任务"));
+    assert!(publisher.visible_text[2].iter().any(|text| text == "62%"));
+    assert!(
+        publisher.visible_text[3]
+            .iter()
+            .any(|text| text == "已验证任务")
     );
 }
 

@@ -261,14 +261,18 @@ impl PublishCoordinator {
 
 fn visible_state_hash(state: &NormalizedDashboardState, now_epoch_seconds: i64) -> String {
     let mut digest = Sha256::new();
-    digest.update(b"codex-zectrix-visible-state-v4\0");
+    digest.update(b"codex-zectrix-visible-state-v5\0");
     digest.update(crate::current_date_label(now_epoch_seconds).as_bytes());
     for window in &state.quota.windows {
         digest.update(window.name.as_bytes());
         digest.update([0, window.used_percent, window.remaining_percent]);
     }
     digest.update(state.quota.reset_credits.to_be_bytes());
-    digest.update([state.quota.stale.into(), state.task_activity_stale.into()]);
+    digest.update([
+        state.quota.stale.into(),
+        state.task_activity_availability as u8,
+        state.task_activity_stale.into(),
+    ]);
     for task in &state.tasks {
         if let Some(title) = &task.title {
             digest.update(title.as_bytes());

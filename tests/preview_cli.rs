@@ -2,6 +2,11 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::{fs, os::unix::fs::PermissionsExt};
 
+use codex_zectrix_dashboard::{
+    DashboardConfig, ObservedDashboardState, ObservedQuota, ObservedQuotaWindow,
+    TaskActivityAvailability, render_dashboard,
+};
+
 #[test]
 fn preview_command_writes_a_400_by_300_monochrome_png() {
     let output_dir = tempfile::tempdir().unwrap();
@@ -51,18 +56,53 @@ printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":37,"wind
     permissions.set_mode(0o755);
     fs::set_permissions(&server, permissions).unwrap();
 
+    let started_at = current_epoch_seconds();
     let status = Command::new(env!("CARGO_BIN_EXE_codex-zectrix-dashboard"))
         .args(["live-preview", "--output", output_path.to_str().unwrap()])
         .env("CODEX_ZECTRIX_CODEX_BIN", &server)
         .env("CODEX_ZECTRIX_DATA_DIR", &data_dir)
         .status()
         .unwrap();
+    let finished_at = current_epoch_seconds();
 
     assert!(status.success());
     let fresh_bytes = fs::read(&output_path).unwrap();
     let image = image::open(&output_path).unwrap().to_luma8();
     assert_eq!(image.dimensions(), (400, 300));
     assert!(image.pixels().all(|pixel| matches!(pixel[0], 0 | 255)));
+    assert!((started_at..=finished_at).any(|render_time| {
+        render_dashboard(
+            ObservedDashboardState {
+                quota: ObservedQuota {
+                    windows: vec![ObservedQuotaWindow {
+                        name: "5 小时".into(),
+                        used_percent: 37,
+                        resets_at_epoch_seconds: 1_786_337_200,
+                    }],
+                    reset_credits: 0,
+                    stale: false,
+                },
+                task_activity_availability: TaskActivityAvailability::Unavailable,
+                task_activity_stale: false,
+                tasks: Vec::new(),
+                prompt: None,
+                response: None,
+                reasoning: None,
+                project_path: None,
+                tool: None,
+                error_text: None,
+                plan: None,
+            },
+            render_time,
+            DashboardConfig::default(),
+        )
+        .is_ok_and(|dashboard| {
+            dashboard
+                .frame
+                .png_bytes()
+                .is_ok_and(|bytes| bytes == fresh_bytes)
+        })
+    }));
 
     fs::write(&server, "#!/bin/sh\nexit 1\n").unwrap();
     let stale_status = Command::new(env!("CARGO_BIN_EXE_codex-zectrix-dashboard"))
@@ -75,6 +115,15 @@ printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":37,"wind
     assert!(stale_status.success());
     assert_ne!(fs::read(output_path).unwrap(), fresh_bytes);
     assert!(data_dir.join("quota.json").is_file());
+}
+
+fn current_epoch_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .try_into()
+        .unwrap()
 }
 
 #[test]

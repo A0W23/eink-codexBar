@@ -7,10 +7,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use codex_zectrix_dashboard::{
     AppServerClient, DashboardConfig, ObservedDashboardState, ObservedQuota, ObservedTask,
     PluginLifecycle, PublishAttempt, PublishCoordinator, PublisherState, QuotaCache,
-    ReadonlyObservationConfig, ReadonlyRolloutObserver, TaskActivityCache, TaskActivitySnapshot,
-    ZectrixPublisher, find_codex_owner_pid, hook_is_tombstoned, parse_hook_event,
-    persist_hook_event, read_hook_events, record_hook_owner, reduce_task_activity,
-    render_dashboard,
+    ReadonlyObservationConfig, ReadonlyRolloutObserver, TaskActivityAvailability,
+    TaskActivityCache, TaskActivitySnapshot, ZectrixPublisher, find_codex_owner_pid,
+    hook_is_tombstoned, parse_hook_event, persist_hook_event, read_hook_events, record_hook_owner,
+    reduce_task_activity, render_dashboard,
 };
 
 mod setup;
@@ -155,14 +155,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Vec<ObservedTask>>(&bytes).ok());
         let mut activity_cache = TaskActivityCache::new(last_known_tasks);
-        let activity =
-            activity_cache.update(observe_activity(&client, &data_dir, now_epoch_seconds));
-        if !activity.stale {
-            fs::write(&activity_cache_path, serde_json::to_vec(&activity.tasks)?)?;
-        }
+        let (activity, task_activity_availability) =
+            match observe_activity(&client, &data_dir, now_epoch_seconds) {
+                Ok(snapshot) => {
+                    let snapshot = activity_cache.update::<std::convert::Infallible>(Ok(snapshot));
+                    if !snapshot.stale {
+                        fs::write(&activity_cache_path, serde_json::to_vec(&snapshot.tasks)?)?;
+                    }
+                    (snapshot, TaskActivityAvailability::Available)
+                }
+                Err(_) => unavailable_task_activity(),
+            };
         (
             ObservedDashboardState {
                 quota,
+                task_activity_availability,
                 task_activity_stale: activity.stale,
                 tasks: activity.tasks,
                 prompt: None,
@@ -342,7 +349,6 @@ fn run_companion() -> Result<(), Box<dyn std::error::Error>> {
     let last_known_tasks = fs::read(&activity_cache_path)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Vec<ObservedTask>>(&bytes).ok());
-    let mut has_activity = last_known_tasks.is_some();
     let mut activity_cache = TaskActivityCache::new(last_known_tasks);
     let publisher_state_path = data_dir.join("publisher-state.json");
     let publisher_state = fs::read(&publisher_state_path)
@@ -403,42 +409,36 @@ fn run_companion() -> Result<(), Box<dyn std::error::Error>> {
                 }
             },
         };
-        let activity = match observe_activity(&client, &data_dir, now_epoch_seconds) {
-            Ok(snapshot) => {
-                has_activity = true;
-                let mut snapshot = activity_cache.update::<std::convert::Infallible>(Ok(snapshot));
-                source_status.task_activity = if snapshot.stale {
-                    TaskActivitySourceStatus::Stale
-                } else {
-                    TaskActivitySourceStatus::Inferred
-                };
-                if write_json_atomically(&activity_cache_path, &snapshot.tasks).is_err() {
-                    snapshot.stale = true;
-                    source_status.task_activity = TaskActivitySourceStatus::Stale;
-                    eprintln!("state_persist_unavailable");
+        let (activity, task_activity_availability) =
+            match observe_activity(&client, &data_dir, now_epoch_seconds) {
+                Ok(snapshot) => {
+                    let mut snapshot =
+                        activity_cache.update::<std::convert::Infallible>(Ok(snapshot));
+                    source_status.task_activity = if snapshot.stale {
+                        TaskActivitySourceStatus::Stale
+                    } else {
+                        TaskActivitySourceStatus::Inferred
+                    };
+                    if write_json_atomically(&activity_cache_path, &snapshot.tasks).is_err() {
+                        snapshot.stale = true;
+                        source_status.task_activity = TaskActivitySourceStatus::Stale;
+                        eprintln!("state_persist_unavailable");
+                    }
+                    (snapshot, TaskActivityAvailability::Available)
                 }
-                snapshot
-            }
-            Err(error) if has_activity => {
-                source_status.task_activity = TaskActivitySourceStatus::Stale;
-                activity_cache.update(Err(error))
-            }
-            Err(_) => {
-                source_status.task_activity = TaskActivitySourceStatus::Unavailable;
-                let _ = write_json_atomically(&source_status_path, &source_status);
-                eprintln!("observation_unavailable");
-                if finish_cycle(&mut cycles, max_cycles, poll_interval) {
-                    break;
+                Err(_) => {
+                    source_status.task_activity = TaskActivitySourceStatus::Unavailable;
+                    eprintln!("observation_unavailable");
+                    unavailable_task_activity()
                 }
-                continue;
-            }
-        };
+            };
         if write_json_atomically(&source_status_path, &source_status).is_err() {
             eprintln!("state_persist_unavailable");
         }
         coordinator.observe(
             ObservedDashboardState {
                 quota,
+                task_activity_availability,
                 task_activity_stale: activity.stale,
                 tasks: activity.tasks,
                 prompt: None,
@@ -491,6 +491,16 @@ fn run_companion() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
+}
+
+fn unavailable_task_activity() -> (TaskActivitySnapshot, TaskActivityAvailability) {
+    (
+        TaskActivitySnapshot {
+            tasks: Vec::new(),
+            stale: false,
+        },
+        TaskActivityAvailability::Unavailable,
+    )
 }
 
 fn current_epoch_seconds() -> Result<i64, Box<dyn std::error::Error>> {

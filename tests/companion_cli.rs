@@ -5,15 +5,21 @@ use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use codex_zectrix_dashboard::{
+    ActivityState, DashboardConfig, ObservedDashboardState, ObservedQuota, ObservedQuotaWindow,
+    ObservedTask, TaskActivityAvailability, normalize_dashboard,
+    render_normalized_dashboard_with_sync,
+};
 
 mod common;
 
 #[test]
-fn companion_combines_cached_activity_with_live_quota_and_publishes_content_free() {
+fn companion_publishes_current_quota_with_a_compatibility_frame_instead_of_cached_activity() {
     let temp = tempfile::tempdir().unwrap();
     let data_dir = temp.path().join("data");
     fs::create_dir_all(&data_dir).unwrap();
-    fs::create_dir(data_dir.join("quota.json")).unwrap();
     fs::write(
         data_dir.join("settings.json"),
         r#"{"deviceId":"SECRET_DEVICE_ID","pageId":3,"privacyMode":false}"#,
@@ -30,6 +36,7 @@ fn companion_combines_cached_activity_with_live_quota_and_publishes_content_free
     let codex_log = temp.path().join("codex.log");
     let codex = fake_codex_command(temp.path());
     let security = fake_security_command(temp.path());
+    let started_at = current_epoch_seconds();
     let output = Command::new(common::dashboard_binary())
         .arg("companion")
         .env("CODEX_ZECTRIX_API_BASE", base_url)
@@ -41,6 +48,7 @@ fn companion_combines_cached_activity_with_live_quota_and_publishes_content_free
         .env("CODEX_ZECTRIX_MAX_CYCLES", "1")
         .output()
         .unwrap();
+    let finished_at = current_epoch_seconds();
 
     assert!(
         output.status.success(),
@@ -58,11 +66,50 @@ fn companion_combines_cached_activity_with_live_quota_and_publishes_content_free
     assert!(!request.0.lines().next().unwrap().contains(secret));
     let image = image::load_from_memory(png).unwrap().to_luma8();
     assert_eq!(image.dimensions(), (400, 300));
+    let expected_frame = (started_at..=finished_at).any(|render_time| {
+        let observed = ObservedDashboardState {
+            quota: ObservedQuota {
+                windows: vec![ObservedQuotaWindow {
+                    name: "5 小时".into(),
+                    used_percent: 37,
+                    resets_at_epoch_seconds: 4_102_444_800,
+                }],
+                reset_credits: 0,
+                stale: false,
+            },
+            task_activity_availability: TaskActivityAvailability::Unavailable,
+            task_activity_stale: false,
+            tasks: vec![ObservedTask::new(
+                "SECRET_TASK_TITLE",
+                ActivityState::Running,
+                4_102_444_800,
+            )],
+            prompt: None,
+            response: None,
+            reasoning: None,
+            project_path: None,
+            tool: None,
+            error_text: None,
+            plan: None,
+        };
+        let normalized = normalize_dashboard(observed, render_time, &DashboardConfig::default());
+        render_normalized_dashboard_with_sync(
+            normalized,
+            render_time,
+            DashboardConfig::default(),
+            Some(render_time),
+        )
+        .is_ok_and(|dashboard| dashboard.frame.png_bytes().is_ok_and(|bytes| bytes == png))
+    });
+    assert!(
+        expected_frame,
+        "published PNG was not the compatibility frame"
+    );
     assert!(data_dir.join("publisher-state.json").is_file());
     let source_status: serde_json::Value =
         serde_json::from_slice(&fs::read(data_dir.join("source-status.json")).unwrap()).unwrap();
-    assert_eq!(source_status["quota"], "stale");
-    assert_eq!(source_status["taskActivity"], "stale");
+    assert_eq!(source_status["quota"], "current");
+    assert_eq!(source_status["taskActivity"], "unavailable");
 
     let codex_requests = fs::read_to_string(codex_log).unwrap();
     assert!(codex_requests.contains("account/rateLimits/read"));
@@ -85,6 +132,15 @@ fn companion_combines_cached_activity_with_live_quota_and_publishes_content_free
     ] {
         assert!(!contains(&diagnostics, secret.as_bytes()));
     }
+}
+
+fn current_epoch_seconds() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .try_into()
+        .unwrap()
 }
 
 #[test]

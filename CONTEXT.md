@@ -16,6 +16,8 @@ _Avoid_: Task, conversation
 The lower dashboard section showing the latest supported execution state for each visible task. A task has only one displayed activity state at a time in the MVP.
 _Avoid_: Attention inbox, task history, plan
 
+Task activity availability is independent of quota availability. When task observation is incompatible, this section shows a compatibility notice instead of stale task claims while the quota section continues normally.
+
 Ended activity states (`本轮完成`, `失败`, and `已中断`) remain eligible for display for 24 hours. A new execution turn for the same task replaces its previous ended state immediately with `执行中`.
 
 The MVP displays at most three task activities. Selection priority is `执行中`, then `失败`, then `已中断`, then `本轮完成`; items within the same state are ordered by most recent activity. When additional eligible tasks exist, the section shows `另有 N 项`.
@@ -68,6 +70,8 @@ The complete attention set is not an MVP capability on the tested Codex Desktop 
 A time-bounded ChatGPT Codex allowance reported as used and remaining percentages with a reset time. It is distinct from API billing and local token counts.
 _Avoid_: Token usage, API spend, balance
 
+Quota availability is independent of task activity availability. A task compatibility failure must not prevent current quota from being rendered or published.
+
 **Reset credit**:
 An available entitlement that can reset eligible Codex quota windows before their scheduled reset. A count of zero is omitted from the dashboard.
 _Avoid_: Quota, API credit, token balance
@@ -83,3 +87,21 @@ _Avoid_: Plugin, app
 **Last known state**:
 The most recent successfully observed dashboard data retained when a source becomes unavailable. It must be marked as potentially stale rather than replaced with zeros or an empty task list.
 _Avoid_: Current state, empty state
+
+**Partial availability**:
+A dashboard condition where independently verified quota or task states remain current while unsupported activity states are explicitly unavailable. Failure of an optional observation capability must not make unrelated verified data stale.
+_Avoid_: Fully current, unavailable dashboard, silent fallback
+
+**Verified activity claim**:
+A displayed task state supported by recognized evidence whose meaning is known. Unrecognized evidence may be ignored, but it must never be reinterpreted into a task state by guesswork.
+_Avoid_: Best-effort guess, full-source rejection
+
+**Observation capability**:
+One independently verifiable kind of dashboard evidence, such as quota, execution activity, normal completion, failure, or interruption. Capabilities can be available or unavailable independently.
+_Avoid_: Data source, fully compatible version
+
+**Compatibility notice**:
+An explicit task-activity message shown when one or more observation capabilities are unavailable after a Codex change. It preserves verified dashboard sections and must not present old task activity as current.
+_Avoid_: Empty task list, task failure, publish failure
+
+A compatibility notice reports local task-observation availability only. It does not imply that a plugin update exists and is not an update notification.

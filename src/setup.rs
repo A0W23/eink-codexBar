@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use codex_zectrix_dashboard::{
     AppServerClient, DashboardConfig, KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE, ObservedDashboardState,
-    ObservedQuota, QuotaCache, render_dashboard,
+    ObservedQuota, QuotaCache, TaskActivityAvailability, render_dashboard,
 };
 use reqwest::blocking::Client;
 use reqwest::blocking::multipart::{Form, Part};
@@ -165,6 +165,7 @@ fn render_pending_preview(
     let output = render_dashboard(
         ObservedDashboardState {
             quota,
+            task_activity_availability: TaskActivityAvailability::Available,
             task_activity_stale: false,
             tasks: Vec::new(),
             prompt: None,

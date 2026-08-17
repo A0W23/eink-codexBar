@@ -1,0 +1,3 @@
+# Degrade Codex observation by capability
+
+The companion will validate quota and task-activity capabilities independently instead of requiring an exact Codex version or a full SQLite schema fingerprint. Additive tables, fields, and unknown events are ignored; only recognized evidence can produce a task state, and incompatible optional evidence disables its corresponding state without making unrelated verified dashboard data stale. The product will not automatically adapt to every Codex release, update itself, or announce that an update exists; an incompatible task source produces a local compatibility notice while quota observation and publishing continue normally.

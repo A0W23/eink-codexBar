@@ -1,7 +1,8 @@
 use codex_zectrix_dashboard::{
     ActivityState, DashboardConfig, ObservedDashboardState, ObservedQuota, ObservedQuotaWindow,
-    ObservedTask, PublishDecision, QuotaCache, normalize_dashboard, parse_app_server_quota,
-    render_dashboard, render_normalized_dashboard, render_normalized_dashboard_with_sync,
+    ObservedTask, PublishDecision, QuotaCache, TaskActivityAvailability, normalize_dashboard,
+    parse_app_server_quota, render_dashboard, render_normalized_dashboard,
+    render_normalized_dashboard_with_sync,
 };
 use serde::Deserialize;
 
@@ -30,6 +31,7 @@ fn sample_state() -> ObservedDashboardState {
             reset_credits: 0,
             stale: false,
         },
+        task_activity_availability: TaskActivityAvailability::Available,
         task_activity_stale: false,
         tasks: vec![
             ObservedTask::new("生成本地看板", ActivityState::Running, 1_786_330_000),
@@ -43,6 +45,46 @@ fn sample_state() -> ObservedDashboardState {
         tool: Some("SECRET_TOOL_MARKER".into()),
         error_text: Some("SECRET_ERROR_MARKER".into()),
         plan: Some("SECRET_PLAN_MARKER".into()),
+    }
+}
+
+#[test]
+fn unavailable_task_activity_replaces_old_rows_without_changing_current_quota() {
+    let mut state = sample_state();
+    state.task_activity_availability = TaskActivityAvailability::Unavailable;
+
+    let output = render_dashboard(state, 1_786_330_000, DashboardConfig::default()).unwrap();
+
+    assert_eq!((output.frame.width, output.frame.height), (400, 300));
+    assert!(
+        output
+            .frame
+            .pixels
+            .iter()
+            .all(|pixel| matches!(pixel, 0 | 255))
+    );
+    assert_eq!(output.normalized.quota.windows[0].used_percent, 37);
+    assert!(!output.normalized.quota.stale);
+    assert_eq!(
+        output.normalized.task_activity_availability,
+        TaskActivityAvailability::Unavailable
+    );
+    assert!(output.normalized.tasks.is_empty());
+    assert_eq!(output.normalized.hidden_task_count, 0);
+    for expected in [
+        "63%",
+        "已用 37%",
+        "重置 2小时 0分",
+        "状态暂不可用",
+        "请检查插件兼容性",
+    ] {
+        assert!(
+            output.visible_text.iter().any(|text| text == expected),
+            "missing {expected}"
+        );
+    }
+    for old_claim in ["生成本地看板", "执行中", "修复配额布局", "本轮完成"] {
+        assert!(!output.visible_text.iter().any(|text| text == old_claim));
     }
 }
 
@@ -66,6 +108,7 @@ fn stale_task_activity_is_visible_without_changing_turn_semantics() {
 fn state_with_quota(quota: ObservedQuota) -> ObservedDashboardState {
     ObservedDashboardState {
         quota,
+        task_activity_availability: TaskActivityAvailability::Available,
         task_activity_stale: false,
         tasks: sample_state().tasks,
         prompt: None,

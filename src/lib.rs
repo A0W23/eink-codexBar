@@ -289,9 +289,19 @@ impl ObservedTask {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskActivityAvailability {
+    #[default]
+    Available,
+    Unavailable,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ObservedDashboardState {
     pub quota: ObservedQuota,
+    #[serde(default)]
+    pub task_activity_availability: TaskActivityAvailability,
     #[serde(default)]
     pub task_activity_stale: bool,
     pub tasks: Vec<ObservedTask>,
@@ -335,6 +345,7 @@ pub struct NormalizedTask {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct NormalizedDashboardState {
     pub quota: NormalizedQuota,
+    pub task_activity_availability: TaskActivityAvailability,
     pub task_activity_stale: bool,
     pub tasks: Vec<NormalizedTask>,
     pub hidden_task_count: usize,
@@ -502,6 +513,9 @@ pub fn normalize_dashboard(
     config: &DisplayConfig,
 ) -> NormalizedDashboardState {
     let mut tasks = observed.tasks;
+    if observed.task_activity_availability == TaskActivityAvailability::Unavailable {
+        tasks.clear();
+    }
     tasks.retain(|task| {
         task.state == ActivityState::Running
             || now_epoch_seconds.saturating_sub(task.activity_at_epoch_seconds) <= 24 * 60 * 60
@@ -531,7 +545,9 @@ pub fn normalize_dashboard(
             reset_credits: observed.quota.reset_credits,
             stale: observed.quota.stale,
         },
-        task_activity_stale: observed.task_activity_stale,
+        task_activity_availability: observed.task_activity_availability,
+        task_activity_stale: observed.task_activity_stale
+            && observed.task_activity_availability == TaskActivityAvailability::Available,
         tasks: tasks
             .into_iter()
             .map(|task| NormalizedTask {
@@ -696,7 +712,28 @@ fn draw_dashboard(
     )?;
     visible.push(quota_message.into());
 
-    if state.task_activity_stale {
+    if state.task_activity_availability == TaskActivityAvailability::Unavailable {
+        draw_text_aligned(
+            &body_font,
+            "状态暂不可用",
+            200,
+            196,
+            HorizontalAlignment::Center,
+            BinaryColor::On,
+            &mut display,
+        )?;
+        draw_text_aligned(
+            &task_title_font,
+            "请检查插件兼容性",
+            200,
+            226,
+            HorizontalAlignment::Center,
+            BinaryColor::On,
+            &mut display,
+        )?;
+        visible.push("状态暂不可用".into());
+        visible.push("请检查插件兼容性".into());
+    } else if state.task_activity_stale {
         draw_text_aligned(
             &text_font,
             "任务数据可能已过期",
