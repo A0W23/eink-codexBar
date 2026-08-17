@@ -1,6 +1,8 @@
 use std::fs;
 use std::process::Command;
 
+mod common;
+
 #[test]
 fn diagnostics_distinguish_source_freshness_without_exposing_payloads() {
     let temp = tempfile::tempdir().unwrap();
@@ -12,7 +14,7 @@ fn diagnostics_distinguish_source_freshness_without_exposing_payloads() {
     )
     .unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_codex-zectrix-dashboard"))
+    let output = Command::new(common::dashboard_binary())
         .arg("diagnostics")
         .env("CODEX_ZECTRIX_DATA_DIR", &data_dir)
         .output()
@@ -29,7 +31,7 @@ fn diagnostics_distinguish_source_freshness_without_exposing_payloads() {
 #[test]
 fn diagnostics_report_unavailable_before_any_observation() {
     let temp = tempfile::tempdir().unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_codex-zectrix-dashboard"))
+    let output = Command::new(common::dashboard_binary())
         .arg("diagnostics")
         .env("CODEX_ZECTRIX_DATA_DIR", temp.path().join("missing"))
         .output()

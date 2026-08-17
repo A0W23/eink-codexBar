@@ -24,6 +24,7 @@ mkdir -p "$stage/.agents/plugins" "$stage/plugin/bin"
 cp .agents/plugins/marketplace.json "$stage/.agents/plugins/marketplace.json"
 cp -R plugin/. "$stage/plugin/"
 cp LICENSE "$stage/plugin/LICENSE"
+printf '%s\n' "$source_fingerprint" > "$stage/plugin/SOURCE_FINGERPRINT"
 mkdir -p "$(dirname -- "$artifact")"
 tar -czf "$artifact" -C "$stage" .
 printf '%s\n' "$artifact"

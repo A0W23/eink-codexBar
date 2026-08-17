@@ -1,6 +1,8 @@
-# Codex Dashboard for ZECTRIX 0.1.6
+# Codex Dashboard for ZECTRIX 0.1.7
 
-Reads the saved API Key through the native macOS Keychain API once per companion launch, preventing repeated `security` authorization prompts.
+Keeps current Codex quota available when task activity observation is temporarily incompatible, and shows an explicit compatibility notice instead of stale task claims.
+
+Recognized execution-turn lifecycle evidence now survives additive Codex app-server, SQLite, and rollout changes. Unknown or ambiguous evidence remains ignored, diagnostics stay content-safe, and quota publishing continues independently.
 
 MVP limitations:
 

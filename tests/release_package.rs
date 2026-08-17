@@ -91,6 +91,41 @@ fn repository_and_distributed_plugin_include_license_and_release_limits() {
 }
 
 #[test]
+fn compatibility_repair_version_agrees_across_package_inputs() {
+    let cargo = fs::read_to_string("Cargo.toml").unwrap();
+    let cargo_version = cargo
+        .lines()
+        .find_map(|line| line.strip_prefix("version = \"")?.strip_suffix('"'))
+        .unwrap();
+    let plugin: serde_json::Value =
+        serde_json::from_slice(&fs::read("plugin/.codex-plugin/plugin.json").unwrap()).unwrap();
+    let notes = fs::read_to_string("plugin/RELEASE_NOTES.md").unwrap();
+
+    let package_version = env!("CARGO_PKG_VERSION");
+    assert_eq!(cargo_version, package_version);
+    assert_eq!(plugin["version"], package_version);
+    assert!(
+        notes.starts_with(&format!(
+            "# Codex Dashboard for ZECTRIX {package_version}\n"
+        )),
+        "release notes do not identify the repair release"
+    );
+}
+
+#[test]
+fn clean_install_validation_uses_only_the_packaged_companion_and_system_tools() {
+    let script = fs::read_to_string("scripts/test-clean-install.sh").unwrap();
+
+    for developer_runtime in ["cargo ", "python", "node ", "npm "] {
+        assert!(
+            !script.contains(developer_runtime),
+            "clean-install validation invokes developer runtime: {developer_runtime}"
+        );
+    }
+    assert!(script.contains("scripts/validate-release.sh"));
+}
+
+#[test]
 fn packaged_companion_runs_without_python_node_or_rust_on_path() {
     let temp = tempfile::tempdir().unwrap();
     let output = Command::new("plugin/bin/codex-zectrix-dashboard")
