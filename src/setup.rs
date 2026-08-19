@@ -6,8 +6,8 @@ use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use codex_zectrix_dashboard::{
-    AppServerClient, DashboardConfig, KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE, ObservedDashboardState,
-    ObservedQuota, QuotaCache, TaskActivityAvailability, render_dashboard,
+    AppServerClient, DashboardConfig, DisplayLocale, KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE,
+    ObservedDashboardState, ObservedQuota, QuotaCache, TaskActivityAvailability, render_dashboard,
 };
 use reqwest::blocking::Client;
 use reqwest::blocking::multipart::{Form, Part};
@@ -24,6 +24,8 @@ pub(crate) struct Settings {
     pub(crate) device_id: String,
     pub(crate) page_id: u8,
     pub(crate) privacy_mode: bool,
+    #[serde(default)]
+    pub(crate) locale: DisplayLocale,
 }
 
 #[derive(Debug, Deserialize)]
@@ -101,9 +103,26 @@ pub fn run_setup() -> Result<(), Box<dyn std::error::Error>> {
             .as_ref()
             .is_some_and(|settings| settings.privacy_mode),
     )?;
+    println!("显示语言：1. 中文  2. English");
+    let default_locale = previous_settings
+        .as_ref()
+        .map_or(DisplayLocale::Chinese, |settings| settings.locale);
+    let locale = match prompt_number(
+        "选择显示语言",
+        1,
+        2,
+        if default_locale == DisplayLocale::English {
+            2
+        } else {
+            1
+        },
+    )? {
+        2 => DisplayLocale::English,
+        _ => DisplayLocale::Chinese,
+    };
 
     let preview_path = data_dir.join("pending-preview.png");
-    render_pending_preview(&data_dir, &preview_path, privacy_mode)?;
+    render_pending_preview(&data_dir, &preview_path, privacy_mode, locale)?;
     println!("已生成待上传预览：{}", preview_path.display());
     if privacy_mode {
         println!("隐私说明：任务标题已隐藏；状态和数量仍会作为图像像素上传到 ZECTRIX Cloud。");
@@ -125,6 +144,7 @@ pub fn run_setup() -> Result<(), Box<dyn std::error::Error>> {
             device_id: devices[device_index].device_id.clone(),
             page_id,
             privacy_mode,
+            locale,
         },
     )?;
     if let Err(error) = zectrix.upload_image(&devices[device_index].device_id, page_id, image) {
@@ -141,6 +161,7 @@ fn render_pending_preview(
     data_dir: &Path,
     preview_path: &Path,
     privacy_mode: bool,
+    locale: DisplayLocale,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let client = env::var_os("CODEX_ZECTRIX_CODEX_BIN")
         .map(AppServerClient::new)
@@ -179,6 +200,7 @@ fn render_pending_preview(
         now,
         DashboardConfig {
             privacy_mode,
+            locale,
             previous_frame_hash: None,
         },
     )?;
@@ -456,7 +478,18 @@ fn restore_settings(
 
 #[cfg(test)]
 mod tests {
-    use super::Keychain;
+    use super::{Keychain, Settings};
+    use codex_zectrix_dashboard::DisplayLocale;
+
+    #[test]
+    fn settings_without_locale_default_to_chinese() {
+        let settings: Settings = serde_json::from_str(
+            r#"{"deviceId":"AA:BB:CC:DD:EE:FF","pageId":4,"privacyMode":false}"#,
+        )
+        .unwrap();
+
+        assert_eq!(settings.locale, DisplayLocale::Chinese);
+    }
 
     #[test]
     fn native_keychain_reader_returns_none_for_a_missing_credential() {

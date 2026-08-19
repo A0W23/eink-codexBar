@@ -1,7 +1,7 @@
 use codex_zectrix_dashboard::{
-    ActivityState, DashboardConfig, ObservedDashboardState, ObservedQuota, ObservedQuotaWindow,
-    ObservedTask, PublishDecision, QuotaCache, TaskActivityAvailability, normalize_dashboard,
-    parse_app_server_quota, render_dashboard, render_normalized_dashboard,
+    ActivityState, DashboardConfig, DisplayLocale, ObservedDashboardState, ObservedQuota,
+    ObservedQuotaWindow, ObservedTask, PublishDecision, QuotaCache, TaskActivityAvailability,
+    normalize_dashboard, parse_app_server_quota, render_dashboard, render_normalized_dashboard,
     render_normalized_dashboard_with_sync,
 };
 use serde::Deserialize;
@@ -237,6 +237,7 @@ fn titles_are_visible_by_default_and_hidden_in_privacy_mode() {
         DashboardConfig {
             privacy_mode: true,
             previous_frame_hash: None,
+            ..DashboardConfig::default()
         },
     )
     .unwrap();
@@ -259,6 +260,78 @@ fn titles_are_visible_by_default_and_hidden_in_privacy_mode() {
         &visible.frame.pixels[title_region.clone()],
         &hidden.frame.pixels[title_region]
     );
+}
+
+#[test]
+fn english_locale_translates_dashboard_chrome_without_changing_task_titles() {
+    let output = render_dashboard(
+        sample_state(),
+        1_786_330_000,
+        DashboardConfig {
+            locale: DisplayLocale::English,
+            ..DashboardConfig::default()
+        },
+    )
+    .unwrap();
+
+    for expected in [
+        "5 hours",
+        "Used 37%",
+        "Resets 2h 0m",
+        "You're in good shape.",
+        "Running",
+        "Failed",
+        "Task completed",
+        "生成本地看板",
+    ] {
+        assert!(
+            output.visible_text.iter().any(|text| text == expected),
+            "missing {expected}"
+        );
+    }
+    for chinese_chrome in ["已用 37%", "重置 2小时 0分", "执行中", "失败", "本轮完成"]
+    {
+        assert!(
+            !output
+                .visible_text
+                .iter()
+                .any(|text| text == chinese_chrome),
+            "unexpected Chinese dashboard label {chinese_chrome}"
+        );
+    }
+}
+
+#[test]
+fn english_locale_covers_two_windows_privacy_and_compatibility_states() {
+    let config = DashboardConfig {
+        locale: DisplayLocale::English,
+        privacy_mode: true,
+        ..DashboardConfig::default()
+    };
+    let quota = parse_app_server_quota(include_str!("../fixtures/quota-two-windows.json")).unwrap();
+    let output = render_dashboard(
+        state_with_quota(quota),
+        1_786_330_000,
+        config.clone(),
+    )
+    .unwrap();
+
+    for expected in ["5 hours", "7 days", "Reset credits 2", "Private task"] {
+        assert!(
+            output.visible_text.iter().any(|text| text == expected),
+            "missing {expected}"
+        );
+    }
+
+    let mut unavailable = sample_state();
+    unavailable.task_activity_availability = TaskActivityAvailability::Unavailable;
+    let output = render_dashboard(unavailable, 1_786_330_000, config).unwrap();
+    for expected in ["Status unavailable", "Check plugin compatibility"] {
+        assert!(
+            output.visible_text.iter().any(|text| text == expected),
+            "missing {expected}"
+        );
+    }
 }
 
 #[test]
@@ -357,6 +430,7 @@ fn task_selection_uses_state_priority_recency_and_preserves_recency_ties() {
         &DashboardConfig {
             privacy_mode: true,
             previous_frame_hash: None,
+            ..DashboardConfig::default()
         },
     );
 

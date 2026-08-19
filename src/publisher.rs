@@ -153,16 +153,23 @@ impl PublishCoordinator {
 
     pub fn observe(&mut self, observed: ObservedDashboardState, now_epoch_seconds: i64) -> bool {
         let normalized = normalize_dashboard(observed, now_epoch_seconds, &self.config);
-        let current_visible_hash = visible_state_hash(&normalized, now_epoch_seconds);
+        let current_visible_hash =
+            visible_state_hash(&normalized, now_epoch_seconds, self.config.locale);
         let changed = if let Some(previous) = self.latest_observed.as_ref() {
             self.latest_visible_hash.as_deref() != Some(&current_visible_hash)
-                || reset_labels_changed(previous, &normalized, now_epoch_seconds)
+                || reset_labels_changed(
+                    previous,
+                    &normalized,
+                    now_epoch_seconds,
+                    self.config.locale,
+                )
         } else {
             self.state.last_visible_state_hash.as_deref() != Some(&current_visible_hash)
                 || persisted_reset_labels_changed(
                     &self.state.last_reset_at_epoch_seconds,
                     &normalized,
                     now_epoch_seconds,
+                    self.config.locale,
                 )
         };
         self.latest_observed = Some(normalized.clone());
@@ -221,7 +228,8 @@ impl PublishCoordinator {
             },
             Some(now_epoch_seconds),
         )?;
-        let published_visible_hash = visible_state_hash(&pending.normalized, now_epoch_seconds);
+        let published_visible_hash =
+            visible_state_hash(&pending.normalized, now_epoch_seconds, self.config.locale);
         if self.state.last_frame_hash.as_deref() == Some(&dashboard.frame.sha256) {
             self.state.last_visible_state_hash = Some(published_visible_hash.clone());
             self.state.last_reset_at_epoch_seconds = reset_timestamps(&pending.normalized);
@@ -259,10 +267,15 @@ impl PublishCoordinator {
     }
 }
 
-fn visible_state_hash(state: &NormalizedDashboardState, now_epoch_seconds: i64) -> String {
+fn visible_state_hash(
+    state: &NormalizedDashboardState,
+    now_epoch_seconds: i64,
+    locale: crate::DisplayLocale,
+) -> String {
     let mut digest = Sha256::new();
     digest.update(b"codex-zectrix-visible-state-v5\0");
-    digest.update(crate::current_date_label(now_epoch_seconds).as_bytes());
+    digest.update(locale.code().as_bytes());
+    digest.update(crate::current_date_label_for(now_epoch_seconds, locale).as_bytes());
     for window in &state.quota.windows {
         digest.update(window.name.as_bytes());
         digest.update([0, window.used_percent, window.remaining_percent]);
@@ -287,31 +300,33 @@ fn reset_labels_changed(
     previous: &NormalizedDashboardState,
     current: &NormalizedDashboardState,
     now_epoch_seconds: i64,
+    locale: crate::DisplayLocale,
 ) -> bool {
     let previous = reset_timestamps(previous);
     let current = reset_timestamps(current);
     previous != current
         && previous
             .iter()
-            .map(|timestamp| crate::quota_reset_label(*timestamp, now_epoch_seconds))
-            .ne(current
-                .iter()
-                .map(|timestamp| crate::quota_reset_label(*timestamp, now_epoch_seconds)))
+            .map(|timestamp| crate::quota_reset_label_for(*timestamp, now_epoch_seconds, locale))
+            .ne(current.iter().map(|timestamp| {
+                crate::quota_reset_label_for(*timestamp, now_epoch_seconds, locale)
+            }))
 }
 
 fn persisted_reset_labels_changed(
     previous: &[i64],
     current: &NormalizedDashboardState,
     now_epoch_seconds: i64,
+    locale: crate::DisplayLocale,
 ) -> bool {
     let current = reset_timestamps(current);
     previous != current
         && previous
             .iter()
-            .map(|timestamp| crate::quota_reset_label(*timestamp, now_epoch_seconds))
-            .ne(current
-                .iter()
-                .map(|timestamp| crate::quota_reset_label(*timestamp, now_epoch_seconds)))
+            .map(|timestamp| crate::quota_reset_label_for(*timestamp, now_epoch_seconds, locale))
+            .ne(current.iter().map(|timestamp| {
+                crate::quota_reset_label_for(*timestamp, now_epoch_seconds, locale)
+            }))
 }
 
 fn reset_timestamps(state: &NormalizedDashboardState) -> Vec<i64> {

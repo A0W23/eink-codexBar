@@ -45,6 +45,32 @@ pub const LAUNCH_AGENT_LABEL: &str = "com.barrybarrywu.codex-zectrix-dashboard";
 pub const KEYCHAIN_SERVICE: &str = "com.barrybarrywu.codex-zectrix-dashboard";
 pub const KEYCHAIN_ACCOUNT: &str = "zectrix-api-key";
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub enum DisplayLocale {
+    #[default]
+    #[serde(rename = "zh")]
+    Chinese,
+    #[serde(rename = "en")]
+    English,
+}
+
+impl DisplayLocale {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Chinese => "zh",
+            Self::English => "en",
+        }
+    }
+
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code.trim().to_ascii_lowercase().as_str() {
+            "zh" | "zh-cn" | "chinese" => Some(Self::Chinese),
+            "en" | "en-us" | "english" => Some(Self::English),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ObservedQuotaWindow {
     pub name: String,
@@ -97,6 +123,18 @@ pub enum ActivityState {
 
 impl ActivityState {
     pub fn label(self) -> &'static str {
+        self.label_for(DisplayLocale::Chinese)
+    }
+
+    pub fn label_for(self, locale: DisplayLocale) -> &'static str {
+        if locale == DisplayLocale::English {
+            return match self {
+                Self::Running => "Running",
+                Self::TurnCompleted => "Task completed",
+                Self::Failed => "Failed",
+                Self::Interrupted => "Interrupted",
+            };
+        }
         match self {
             Self::Running => "执行中",
             Self::TurnCompleted => "本轮完成",
@@ -353,6 +391,7 @@ pub struct NormalizedDashboardState {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct DisplayConfig {
     pub privacy_mode: bool,
+    pub locale: DisplayLocale,
     pub previous_frame_hash: Option<String>,
 }
 
@@ -576,6 +615,7 @@ pub fn render_normalized_dashboard_with_sync(
         &normalized,
         now_epoch_seconds,
         last_successful_sync_epoch_seconds,
+        config.locale,
     )?;
     let sha256 = format!("{:x}", Sha256::digest(&pixels));
     let publish_decision = if config.previous_frame_hash.as_deref() == Some(&sha256) {
@@ -601,6 +641,7 @@ fn draw_dashboard(
     state: &NormalizedDashboardState,
     now_epoch_seconds: i64,
     last_successful_sync_epoch_seconds: Option<i64>,
+    locale: DisplayLocale,
 ) -> Result<(Vec<u8>, Vec<String>), DashboardError> {
     let mut display = FrameDisplay::new();
     let text_font = FontRenderer::new::<u8g2_font_wqy13_t_gb2312>();
@@ -615,9 +656,12 @@ fn draw_dashboard(
         .draw_styled(&PrimitiveStyle::with_fill(BinaryColor::On), &mut display)
         .unwrap();
 
-    let date = current_date_label(now_epoch_seconds);
+    let date = current_date_label_for(now_epoch_seconds, locale);
     let date_header = if state.quota.stale {
-        format!("数据旧  {date}")
+        match locale {
+            DisplayLocale::Chinese => format!("数据旧  {date}"),
+            DisplayLocale::English => format!("STALE  {date}"),
+        }
     } else {
         date.clone()
     };
@@ -632,7 +676,10 @@ fn draw_dashboard(
     )?;
     visible.push(date);
     if state.quota.stale {
-        visible.push("数据可能已过期".into());
+        visible.push(match locale {
+            DisplayLocale::Chinese => "数据可能已过期".into(),
+            DisplayLocale::English => "Data may be stale".into(),
+        });
     }
 
     match state.quota.windows.as_slice() {
@@ -644,9 +691,14 @@ fn draw_dashboard(
             &hero_number_font,
             &mut display,
             &mut visible,
+            locale,
         )?,
         [first, second] => {
-            draw_text_color(&body_font, "额度", 14, 21, BinaryColor::Off, &mut display)?;
+            let heading = match locale {
+                DisplayLocale::Chinese => "额度",
+                DisplayLocale::English => "Limits",
+            };
+            draw_text_color(&body_font, heading, 14, 21, BinaryColor::Off, &mut display)?;
             Rectangle::new(Point::new(200, 34), Size::new(1, 56))
                 .draw_styled(&PrimitiveStyle::with_fill(BinaryColor::Off), &mut display)
                 .unwrap();
@@ -660,6 +712,7 @@ fn draw_dashboard(
                 &compact_number_font,
                 &mut display,
                 &mut visible,
+                locale,
             )?;
             draw_compact_quota_window(
                 second,
@@ -671,6 +724,7 @@ fn draw_dashboard(
                 &compact_number_font,
                 &mut display,
                 &mut visible,
+                locale,
             )?;
         }
         _ => {
@@ -681,7 +735,10 @@ fn draw_dashboard(
     }
 
     if state.quota.reset_credits > 0 {
-        let credits = format!("重置额度 {}", state.quota.reset_credits);
+        let credits = match locale {
+            DisplayLocale::Chinese => format!("重置额度 {}", state.quota.reset_credits),
+            DisplayLocale::English => format!("Reset credits {}", state.quota.reset_credits),
+        };
         draw_text_aligned(
             &text_font,
             credits.as_str(),
@@ -700,7 +757,7 @@ fn draw_dashboard(
         .map(|window| window.remaining_percent)
         .min()
         .unwrap_or_default();
-    let quota_message = quota_message(lowest_remaining);
+    let quota_message = quota_message(lowest_remaining, locale);
     draw_text_color(
         &body_font,
         quota_message,
@@ -712,9 +769,13 @@ fn draw_dashboard(
     visible.push(quota_message.into());
 
     if state.task_activity_availability == TaskActivityAvailability::Unavailable {
+        let (status, detail) = match locale {
+            DisplayLocale::Chinese => ("状态暂不可用", "请检查插件兼容性"),
+            DisplayLocale::English => ("Status unavailable", "Check plugin compatibility"),
+        };
         draw_text_aligned(
             &body_font,
-            "状态暂不可用",
+            status,
             200,
             196,
             HorizontalAlignment::Center,
@@ -723,37 +784,55 @@ fn draw_dashboard(
         )?;
         draw_text_aligned(
             &task_title_font,
-            "请检查插件兼容性",
+            detail,
             200,
             226,
             HorizontalAlignment::Center,
             BinaryColor::On,
             &mut display,
         )?;
-        visible.push("状态暂不可用".into());
-        visible.push("请检查插件兼容性".into());
+        visible.push(status.into());
+        visible.push(detail.into());
     } else if state.task_activity_stale {
+        let stale = match locale {
+            DisplayLocale::Chinese => "任务数据可能已过期",
+            DisplayLocale::English => "Task data may be stale",
+        };
         draw_text_aligned(
             &text_font,
-            "任务数据可能已过期",
+            stale,
             386,
             148,
             HorizontalAlignment::Right,
             BinaryColor::On,
             &mut display,
         )?;
-        visible.push("任务数据可能已过期".into());
+        visible.push(stale.into());
     }
 
     let task_start_y = if state.task_activity_stale { 171 } else { 163 };
+    let task_title_x = match locale {
+        DisplayLocale::Chinese => 92,
+        DisplayLocale::English => 126,
+    };
+    let task_title_width = 386 - task_title_x;
     for (index, task) in state.tasks.iter().enumerate() {
         let y = task_start_y + index as i32 * 38;
-        let label = task.state.label();
+        let label = task.state.label_for(locale);
         draw_text(&task_status_font, label, 14, y, &mut display)?;
         visible.push(label.into());
-        let title = task.title.as_deref().unwrap_or("隐私任务");
-        let fitted_title = fit_text(&task_title_font, title, 294);
-        draw_text(&task_title_font, fitted_title.as_str(), 92, y, &mut display)?;
+        let title = task.title.as_deref().unwrap_or(match locale {
+            DisplayLocale::Chinese => "隐私任务",
+            DisplayLocale::English => "Private task",
+        });
+        let fitted_title = fit_text(&task_title_font, title, task_title_width);
+        draw_text(
+            &task_title_font,
+            fitted_title.as_str(),
+            task_title_x,
+            y,
+            &mut display,
+        )?;
         visible.push(title.into());
     }
 
@@ -764,14 +843,20 @@ fn draw_dashboard(
     }
 
     if state.hidden_task_count > 0 {
-        let overflow = format!("另有 {} 项", state.hidden_task_count);
+        let overflow = match locale {
+            DisplayLocale::Chinese => format!("另有 {} 项", state.hidden_task_count),
+            DisplayLocale::English => format!("{} more", state.hidden_task_count),
+        };
         draw_text(&text_font, overflow.as_str(), 14, 292, &mut display)?;
         visible.push(overflow);
     }
 
     if let Some(timestamp) = last_successful_sync_epoch_seconds {
         let (hour, minute) = local_time(timestamp);
-        let sync = format!("上次同步 {hour:02}:{minute:02}");
+        let sync = match locale {
+            DisplayLocale::Chinese => format!("上次同步 {hour:02}:{minute:02}"),
+            DisplayLocale::English => format!("Synced {hour:02}:{minute:02}"),
+        };
         draw_text_aligned(
             &text_font,
             sync.as_str(),
@@ -795,8 +880,13 @@ fn draw_single_quota_window(
     number_font: &FontRenderer,
     display: &mut FrameDisplay,
     visible: &mut Vec<String>,
+    locale: DisplayLocale,
 ) -> Result<(), DashboardError> {
-    let heading = format!("{}额度", window.name);
+    let window_name = localized_window_name(&window.name, locale);
+    let heading = match locale {
+        DisplayLocale::Chinese => format!("{window_name}额度"),
+        DisplayLocale::English => format!("{window_name} limit"),
+    };
     draw_text_color(
         body_font,
         heading.as_str(),
@@ -805,7 +895,7 @@ fn draw_single_quota_window(
         BinaryColor::Off,
         display,
     )?;
-    visible.push(window.name.clone());
+    visible.push(window_name);
 
     let remaining = window.remaining_percent.to_string();
     draw_text_color(
@@ -819,7 +909,10 @@ fn draw_single_quota_window(
     let percentage_x = 20 + i32::try_from(remaining.len()).unwrap_or(3) * 27;
     draw_text_color(
         body_font,
-        "% 剩余",
+        match locale {
+            DisplayLocale::Chinese => "% 剩余",
+            DisplayLocale::English => "% left",
+        },
         percentage_x,
         82,
         BinaryColor::Off,
@@ -827,7 +920,10 @@ fn draw_single_quota_window(
     )?;
     visible.push(format!("{remaining}%"));
 
-    let used = format!("已用 {}%", window.used_percent);
+    let used = match locale {
+        DisplayLocale::Chinese => format!("已用 {}%", window.used_percent),
+        DisplayLocale::English => format!("Used {}%", window.used_percent),
+    };
     draw_text_aligned(
         body_font,
         used.as_str(),
@@ -839,7 +935,7 @@ fn draw_single_quota_window(
     )?;
     visible.push(used);
 
-    let reset = quota_reset_label(window.resets_at_epoch_seconds, now_epoch_seconds);
+    let reset = quota_reset_label_for(window.resets_at_epoch_seconds, now_epoch_seconds, locale);
     draw_text_aligned(
         text_font,
         reset.as_str(),
@@ -866,18 +962,23 @@ fn draw_compact_quota_window(
     number_font: &FontRenderer,
     display: &mut FrameDisplay,
     visible: &mut Vec<String>,
+    locale: DisplayLocale,
 ) -> Result<(), DashboardError> {
+    let window_name = localized_window_name(&window.name, locale);
     draw_text_color(
         text_font,
-        window.name.as_str(),
+        window_name.as_str(),
         x,
         43,
         BinaryColor::Off,
         display,
     )?;
-    visible.push(window.name.clone());
+    visible.push(window_name);
 
-    let used = format!("已用 {}%", window.used_percent);
+    let used = match locale {
+        DisplayLocale::Chinese => format!("已用 {}%", window.used_percent),
+        DisplayLocale::English => format!("Used {}%", window.used_percent),
+    };
     draw_text_aligned(
         text_font,
         used.as_str(),
@@ -901,7 +1002,10 @@ fn draw_compact_quota_window(
     let percentage_x = x + 4 + i32::try_from(remaining.len()).unwrap_or(3) * 20;
     draw_text_color(
         body_font,
-        "% 剩余",
+        match locale {
+            DisplayLocale::Chinese => "% 剩余",
+            DisplayLocale::English => "% left",
+        },
         percentage_x,
         80,
         BinaryColor::Off,
@@ -911,7 +1015,7 @@ fn draw_compact_quota_window(
 
     draw_quota_bar(window.remaining_percent, x, 88, 172, 8, display);
 
-    let reset = quota_reset_label(window.resets_at_epoch_seconds, now_epoch_seconds);
+    let reset = quota_reset_label_for(window.resets_at_epoch_seconds, now_epoch_seconds, locale);
     draw_text_color(text_font, reset.as_str(), x, 111, BinaryColor::Off, display)?;
     visible.push(reset);
     Ok(())
@@ -939,7 +1043,11 @@ fn draw_quota_bar(
     }
 }
 
-pub(crate) fn quota_reset_label(resets_at_epoch_seconds: i64, now_epoch_seconds: i64) -> String {
+pub(crate) fn quota_reset_label_for(
+    resets_at_epoch_seconds: i64,
+    now_epoch_seconds: i64,
+    locale: DisplayLocale,
+) -> String {
     let seconds = resets_at_epoch_seconds
         .saturating_sub(now_epoch_seconds)
         .max(0);
@@ -949,13 +1057,44 @@ pub(crate) fn quota_reset_label(resets_at_epoch_seconds: i64, now_epoch_seconds:
     let minutes = total_minutes % 60;
     let mut parts = Vec::new();
     if days > 0 {
-        parts.push(format!("{days}天"));
+        parts.push(match locale {
+            DisplayLocale::Chinese => format!("{days}天"),
+            DisplayLocale::English => format!("{days}d"),
+        });
     }
     if days > 0 || hours > 0 {
-        parts.push(format!("{hours}小时"));
+        parts.push(match locale {
+            DisplayLocale::Chinese => format!("{hours}小时"),
+            DisplayLocale::English => format!("{hours}h"),
+        });
     }
-    parts.push(format!("{minutes}分"));
-    format!("重置 {}", parts.join(" "))
+    parts.push(match locale {
+        DisplayLocale::Chinese => format!("{minutes}分"),
+        DisplayLocale::English => format!("{minutes}m"),
+    });
+    match locale {
+        DisplayLocale::Chinese => format!("重置 {}", parts.join(" ")),
+        DisplayLocale::English => format!("Resets {}", parts.join(" ")),
+    }
+}
+
+fn localized_window_name(name: &str, locale: DisplayLocale) -> String {
+    if locale == DisplayLocale::Chinese {
+        return name.to_owned();
+    }
+    for (suffix, singular, plural) in [
+        ("天", "day", "days"),
+        ("小时", "hour", "hours"),
+        ("分钟", "min", "min"),
+    ] {
+        if let Some(value) = name.trim().strip_suffix(suffix).map(str::trim)
+            && let Ok(value) = value.parse::<u64>()
+        {
+            let unit = if value == 1 { singular } else { plural };
+            return format!("{value} {unit}");
+        }
+    }
+    name.to_owned()
 }
 
 fn draw_text<F: u8g2_fonts::Content>(
@@ -1028,7 +1167,16 @@ fn draw_text_aligned<F: u8g2_fonts::Content>(
     .map_err(|error| DashboardError::Font(format!("{error:?}")))
 }
 
-fn quota_message(remaining_percent: u8) -> &'static str {
+fn quota_message(remaining_percent: u8, locale: DisplayLocale) -> &'static str {
+    if locale == DisplayLocale::English {
+        return match remaining_percent {
+            81..=100 => "Plenty of runway.",
+            51..=80 => "You're in good shape.",
+            31..=50 => "Watch your usage.",
+            11..=30 => "Quota is running low.",
+            _ => "Waiting for reset.",
+        };
+    }
     match remaining_percent {
         81..=100 => "站起来蹬！",
         51..=80 => "还能蹬，别急着坐下。",
@@ -1038,8 +1186,23 @@ fn quota_message(remaining_percent: u8) -> &'static str {
     }
 }
 
-pub(crate) fn current_date_label(epoch_seconds: i64) -> String {
+pub(crate) fn current_date_label_for(epoch_seconds: i64, locale: DisplayLocale) -> String {
     let time = local_tm(epoch_seconds);
+    if locale == DisplayLocale::English {
+        let months = [
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ];
+        let weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        let month = usize::try_from(time.tm_mon)
+            .ok()
+            .and_then(|index| months.get(index))
+            .unwrap_or(&"???");
+        let weekday = usize::try_from(time.tm_wday)
+            .ok()
+            .and_then(|index| weekdays.get(index))
+            .unwrap_or(&"???");
+        return format!("{month} {} {weekday}", time.tm_mday);
+    }
     let weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
     let weekday = usize::try_from(time.tm_wday)
         .ok()

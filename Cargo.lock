@@ -124,7 +124,7 @@ dependencies = [
 
 [[package]]
 name = "codex-zectrix-dashboard"
-version = "0.1.7"
+version = "0.1.7+codex.20260819205756"
 dependencies = [
  "embedded-graphics",
  "image",

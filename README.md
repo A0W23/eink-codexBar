@@ -24,6 +24,7 @@ ZECTRIX NOTE4 上的实际运行效果。照片中的画面由 companion 读取�
 - 最多三条近期任务动态：`执行中`、`本轮完成`、`失败`或`已中断`
 - 数据源暂时不可用时保留上次状态，并明确标记为可能过期
 - 隐私模式隐藏任务标题，但保留状态和数量
+- 看板固定标签支持中文和 English；任务标题保留原始语言
 
 ## 工作方式
 
@@ -46,7 +47,7 @@ NOTE4 的刷新频率表示设备检查云端新画面的频率，并不代表 c
 2. 进入「开放 API」，点击「创建 API Key」。
 3. 妥善保存生成的 Key；它等同账号密码，请勿粘贴到聊天中或提交到代码仓库。
 
-完整接口说明参见 [ZECTRIX 官方 API 文档](https://wiki.zectrix.com/zh/software/api-docs)。setup 会在本机读取 API Key，自动列出兼容的 NOTE4 设备，并让你选择要使用的持久页面，无需手动填写设备 MAC 地址或编辑配置文件。
+完整接口说明参见 [ZECTRIX 官方 API 文档](https://wiki.zectrix.com/zh/software/api-docs)。setup 会在本机读取 API Key，自动列出兼容的 NOTE4 设备，并让你选择要使用的持久页面、隐私模式和看板语言，无需手动填写设备 MAC 地址或编辑配置文件。
 
 ```sh
 codex plugin marketplace add BarryBarrywu/codex-zectrix-dashboard

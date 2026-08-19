@@ -36,6 +36,29 @@ fn preview_command_writes_a_400_by_300_monochrome_png() {
 }
 
 #[test]
+fn preview_command_accepts_english_locale() {
+    let output_dir = tempfile::tempdir().unwrap();
+    let output_path = output_dir.path().join("english.png");
+    let status = Command::new(env!("CARGO_BIN_EXE_codex-zectrix-dashboard"))
+        .args([
+            "preview",
+            "--input",
+            "fixtures/sample-dashboard.json",
+            "--output",
+            output_path.to_str().unwrap(),
+            "--language",
+            "en",
+        ])
+        .status()
+        .unwrap();
+
+    assert!(status.success());
+    let image = image::open(output_path).unwrap().to_luma8();
+    assert_eq!(image.dimensions(), (400, 300));
+    assert!(image.pixels().all(|pixel| matches!(pixel[0], 0 | 255)));
+}
+
+#[test]
 fn live_preview_reads_the_official_app_server_quota_and_writes_a_frame() {
     let output_dir = tempfile::tempdir().unwrap();
     let server = output_dir.path().join("fake-codex");

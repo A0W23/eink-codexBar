@@ -4,10 +4,10 @@ use std::sync::mpsc;
 use std::thread;
 
 use codex_zectrix_dashboard::{
-    ActivityState, DashboardConfig, DashboardOutput, FramePublisher, ObservedDashboardState,
-    ObservedQuota, ObservedQuotaWindow, ObservedTask, PublishAttempt, PublishCoordinator,
-    PublisherState, TaskActivityAvailability, ZectrixPublisher, normalize_dashboard,
-    render_normalized_dashboard_with_sync,
+    ActivityState, DashboardConfig, DashboardOutput, DisplayLocale, FramePublisher,
+    ObservedDashboardState, ObservedQuota, ObservedQuotaWindow, ObservedTask, PublishAttempt,
+    PublishCoordinator, PublisherState, TaskActivityAvailability, ZectrixPublisher,
+    normalize_dashboard, render_normalized_dashboard_with_sync,
 };
 
 fn observed(title: &str, state: ActivityState) -> ObservedDashboardState {
@@ -112,6 +112,42 @@ fn visible_changes_coalesce_and_retries_keep_the_newest_state_behind_the_interva
     assert_eq!(
         coordinator.state().last_successful_sync_epoch_seconds,
         Some(120)
+    );
+}
+
+#[test]
+fn changing_locale_forces_a_localized_publish() {
+    let mut publisher = RecordingPublisher::default();
+    let mut chinese =
+        PublishCoordinator::new(DashboardConfig::default(), PublisherState::default());
+
+    assert!(chinese.observe(observed("Keep this title", ActivityState::Running), 0));
+    assert_eq!(
+        chinese.try_publish(0, &mut publisher).unwrap(),
+        PublishAttempt::Published
+    );
+
+    let mut english = PublishCoordinator::new(
+        DashboardConfig {
+            locale: DisplayLocale::English,
+            ..DashboardConfig::default()
+        },
+        chinese.state().clone(),
+    );
+    assert!(english.observe(observed("Keep this title", ActivityState::Running), 60));
+    assert_eq!(
+        english.try_publish(60, &mut publisher).unwrap(),
+        PublishAttempt::Published
+    );
+    assert!(
+        publisher.visible_text[1]
+            .iter()
+            .any(|text| text == "Running")
+    );
+    assert!(
+        !publisher.visible_text[1]
+            .iter()
+            .any(|text| text == "执行中")
     );
 }
 

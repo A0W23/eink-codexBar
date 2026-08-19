@@ -47,7 +47,7 @@ fn setup_discovers_a_current_note4_previews_then_uploads_only_after_confirmation
         .stdin
         .take()
         .unwrap()
-        .write_all(format!("{secret}\n1\n3\n\ny\n").as_bytes())
+        .write_all(format!("{secret}\n1\n3\n\n2\ny\n").as_bytes())
         .unwrap();
     let output = child.wait_with_output().unwrap();
 
@@ -102,6 +102,7 @@ fn setup_discovers_a_current_note4_previews_then_uploads_only_after_confirmation
     assert_eq!(settings["deviceId"], "AA:BB:CC:DD:EE:FF");
     assert_eq!(settings["pageId"], 3);
     assert_eq!(settings["privacyMode"], false);
+    assert_eq!(settings["locale"], "en");
     assert!(settings.get("apiKey").is_none());
     assert!(keychain_state.is_file());
     assert_eq!(
@@ -140,7 +141,7 @@ fn cancelling_setup_keeps_the_device_unchanged_and_does_not_store_the_key() {
         &base_url,
         &secret,
         &keychain_state,
-        format!("{secret}\n1\n1\nn\nn\n"),
+        format!("{secret}\n1\n1\nn\n\nn\n"),
     );
 
     assert!(output.status.success());
@@ -181,7 +182,7 @@ fn rerunning_setup_reuses_keychain_and_changes_page_and_privacy_mode() {
         &base_url,
         &secret,
         &keychain_state,
-        "\n1\n5\ny\ny\n".into(),
+        "\n1\n5\ny\n2\ny\n".into(),
     );
 
     assert!(
@@ -203,6 +204,7 @@ fn rerunning_setup_reuses_keychain_and_changes_page_and_privacy_mode() {
         serde_json::from_slice(&fs::read(temp.path().join("data/settings.json")).unwrap()).unwrap();
     assert_eq!(settings["pageId"], 5);
     assert_eq!(settings["privacyMode"], true);
+    assert_eq!(settings["locale"], "en");
 }
 
 #[test]
@@ -226,7 +228,7 @@ fn failed_upload_restores_the_previous_settings() {
         &base_url,
         &secret,
         &keychain_state,
-        "\n1\n5\n\ny\n".into(),
+        "\n1\n5\n\n\ny\n".into(),
     );
 
     assert!(!output.status.success());
@@ -255,7 +257,7 @@ fn server_error_reports_an_unknown_result_and_keeps_the_selected_settings() {
         &base_url,
         &secret,
         &keychain_state,
-        "\n1\n5\n\ny\n".into(),
+        "\n1\n5\n\n\ny\n".into(),
     );
 
     assert!(!output.status.success());

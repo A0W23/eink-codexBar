@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use codex_zectrix_dashboard::{
-    AppServerClient, DashboardConfig, ObservedDashboardState, ObservedQuota, ObservedTask,
-    PluginLifecycle, PublishAttempt, PublishCoordinator, PublisherState, QuotaCache,
+    AppServerClient, DashboardConfig, DisplayLocale, ObservedDashboardState, ObservedQuota,
+    ObservedTask, PluginLifecycle, PublishAttempt, PublishCoordinator, PublisherState, QuotaCache,
     ReadonlyObservationConfig, ReadonlyRolloutObserver, TaskActivityAvailability,
     TaskActivityCache, TaskActivitySnapshot, ZectrixPublisher, find_codex_owner_pid,
     hook_is_tombstoned, parse_hook_event, persist_hook_event, read_hook_events, record_hook_owner,
@@ -105,11 +105,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut input = None;
     let mut output = None;
     let mut privacy_mode = false;
+    let mut locale = DisplayLocale::Chinese;
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--input" => input = args.next().map(PathBuf::from),
             "--output" => output = args.next().map(PathBuf::from),
             "--privacy" => privacy_mode = true,
+            "--language" => {
+                let code = args.next().ok_or("--language 需要 zh 或 en")?;
+                locale = DisplayLocale::from_code(&code).ok_or("--language 只支持 zh 或 en")?;
+            }
             _ => return Err(format!("未知参数：{argument}").into()),
         }
     }
@@ -185,6 +190,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         render_time,
         DashboardConfig {
             privacy_mode,
+            locale,
             previous_frame_hash: None,
         },
     )?;
@@ -374,6 +380,7 @@ fn run_companion() -> Result<(), Box<dyn std::error::Error>> {
     let mut coordinator = PublishCoordinator::new(
         DashboardConfig {
             privacy_mode: settings.privacy_mode,
+            locale: settings.locale,
             previous_frame_hash: None,
         },
         publisher_state,

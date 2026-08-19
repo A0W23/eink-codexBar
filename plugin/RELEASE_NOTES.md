@@ -1,4 +1,14 @@
-# Codex Dashboard for ZECTRIX 0.1.7
+# Codex Dashboard for ZECTRIX 0.1.7+codex.20260819205756
+
+Adds a persisted Chinese/English display locale. Existing settings remain Chinese for backward
+compatibility; rerun setup to select English. Quota labels, reset timing, dates, task states,
+privacy and compatibility messages, overflow counts, and sync status are localized while task
+titles retain their original language.
+
+The English completed-state label is `Task completed`.
+
+The preview CLI accepts `--language zh|en`, and a locale change is treated as a visible state
+change so the companion publishes a newly localized frame.
 
 Keeps current Codex quota available when task activity observation is temporarily incompatible, and shows an explicit compatibility notice instead of stale task claims.
 

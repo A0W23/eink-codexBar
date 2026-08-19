@@ -1,7 +1,7 @@
 ---
 name: setup-zectrix-dashboard
 description: Set up the installed Codex Dashboard for a ZECTRIX NOTE4.
-disable-model-invocation: true
+disable-model-invocation: false
 ---
 
 Resolve the plugin root as the directory two levels above this file. Run its bundled `bin/codex-zectrix-dashboard` companion; do not install Python, Node.js, or Rust.
