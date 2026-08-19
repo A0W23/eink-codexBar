@@ -110,13 +110,6 @@ cargo test --locked --all-features
 
 自动化测试、分发包验证和 NOTE4 实机验证应分别报告。设备选择、持久 `pageId`、首次推送、后续更新和实体屏幕可读性仍需单独进行实机检查。
 
-## 关注我们
-
-如果这个小工具对你有帮助，欢迎在 B 站关注我们：
-
-- [极趣实验室（硬件官方）](https://space.bilibili.com/13131424)：了解 ZECTRIX 墨水屏、桌搭硬件和更多开源玩法。
-- [最近使用（项目作者）](https://space.bilibili.com/217963572)：分享苹果生态、AI 工具与效率实践。
-
 ## License
 
 [MIT](./LICENSE)
