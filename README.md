@@ -1,3 +1,5 @@
+# eink-codexBar
+
 <p align="center">
   <img src="./assets/readme/hero.svg" width="100%" alt="Codex Dashboard for ZECTRIX：在 NOTE4 电子纸上显示 Codex 额度与任务动态">
 </p>
